@@ -67,8 +67,8 @@ The script requires the following tools to be installed:
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/your-username/apk-keylogger-injector.git
-cd apk-keylogger-injector
+git clone https://github.com/Malik506-dev/Apk-Keylogger-Injector.git
+cd Apk-Keylogger-Injector
 ```
 
 ### 2. Install dependencies
